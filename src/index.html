@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pace</title>
+<link rel="stylesheet" href="fonts.css">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="wrap" id="app">
+  <header>
+    <div>
+      <h1>Pace<span>.</span></h1>
+      <p class="sub">Example projects below, swap in your own</p>
+    </div>
+    <div class="row">
+      <span class="mode-chip"><span class="dot"></span><span id="musicMode">Spotify: Work mix</span></span>
+    </div>
+  </header>
+
+  <div class="grid">
+    <section class="panel" aria-label="Desk">
+      <div class="desk">
+        <div class="char-wrap">
+          <svg id="char" viewBox="0 0 120 120" aria-hidden="true">
+            <g class="bob">
+              <ellipse cx="60" cy="114" rx="34" ry="4" fill="var(--line)"/>
+              <path class="body" d="M60 14c28 0 44 20 44 50 0 28-18 46-44 46S16 92 16 64c0-30 16-50 44-50z"/>
+              <path d="M44 10q4 -8 10 0" stroke="var(--ink)" stroke-width="3" fill="none" stroke-linecap="round"/>
+              <g class="blink"><ellipse cx="46" cy="56" rx="6" ry="8" fill="#fff"/><ellipse cx="74" cy="56" rx="6" ry="8" fill="#fff"/>
+              <circle id="pl" cx="47" cy="58" r="3.4" fill="#171a2b"/><circle id="pr" cx="75" cy="58" r="3.4" fill="#171a2b"/></g>
+              <path id="mouth" d="M48 78q12 10 24 0" stroke="#171a2b" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+            </g>
+          </svg>
+          <div class="bubble" id="say" aria-live="polite">Hey. Ready to run the day?</div>
+        </div>
+        <div class="clock">
+          <div class="ring">
+            <svg viewBox="0 0 100 100" aria-hidden="true">
+              <circle cx="50" cy="50" r="44" fill="none" stroke="var(--track)" stroke-width="7"/>
+              <circle id="arc" cx="50" cy="50" r="44" fill="none" stroke="var(--mode, var(--work))" stroke-width="7" stroke-linecap="round" pathLength="1000" stroke-dasharray="1000" stroke-dashoffset="0"/>
+            </svg>
+            <div class="face">
+              <div class="label" id="blockType">Focus</div>
+              <div id="time" role="timer" aria-live="off">50:00</div>
+              <div id="blockName">Project</div>
+            </div>
+          </div>
+          <div class="next" id="next">Up next: —</div>
+        </div>
+      </div>
+      <div class="controls">
+        <button class="primary" id="go">Start day</button>
+        <button id="skip">Skip block</button>
+        <button id="plus">+5 min</button>
+        <button id="speed" aria-pressed="false">Demo speed: off</button>
+      </div>
+      <p class="note" style="text-align:center">Demo speed runs the clock 60× faster so you can watch transitions, sounds, and music switches.</p>
+    </section>
+
+    <section class="panel" aria-label="Today's plan">
+      <div class="row" style="justify-content:space-between">
+        <h2>Today's run sheet</h2>
+        <span class="label" id="summary"></span>
+      </div>
+      <div class="sheet" id="sheet"></div>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="panel">
+      <div class="row" style="justify-content:space-between">
+        <h2>Projects</h2>
+        <button id="add">Add project</button>
+      </div>
+      <div class="tbl">
+        <table>
+          <thead><tr><th>Project</th><th>Due</th><th>Hrs left</th><th></th></tr></thead>
+          <tbody id="projects"></tbody>
+        </table>
+      </div>
+      <p class="note">Pace works back from each deadline: hours left ÷ days left sets today's share, and blocks rotate so no project gets starved.</p>
+    </section>
+
+    <section class="panel">
+      <h2>Your rhythm</h2>
+      <div class="settings">
+        <label for="dayStart">Day starts<input id="dayStart" type="time" value="10:00"></label>
+        <label for="dayEnd">Day ends<input id="dayEnd" type="time" value="18:00"></label>
+        <label for="focus">Focus block (min)<input id="focus" type="number" min="15" max="120" value="50"></label>
+        <label for="snack">Snack break (min)<input id="snack" type="number" min="5" max="30" value="10"></label>
+        <label for="meal">Meal at<input id="meal" type="time" value="13:00"></label>
+        <label for="personality">Character
+          <select id="personality">
+            <option value="coach">Coach</option>
+            <option value="chill">Chill friend</option>
+            <option value="hype">Hype man</option>
+          </select>
+        </label>
+      </div>
+      <div class="label" style="margin-top:16px">Sound pack · tap to preview</div>
+      <div class="pack">
+        <button data-snd="start">Block start</button>
+        <button data-snd="warn">5-min warning</button>
+        <button data-snd="end">Time's up</button>
+        <button data-snd="done">Day complete</button>
+      </div>
+      <p class="note">Each character has its own sounds. Custom sound uploads and Spotify playback are coming next.</p>
+    </section>
+  </div>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
