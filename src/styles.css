@@ -147,6 +147,14 @@ select option{background:#12141f}
 .grow{flex:1 1 260px;min-width:0}
 .conn{border:1px solid var(--line);border-radius:14px;padding:10px 12px;margin-bottom:6px}
 .conn.off{opacity:.55}
+.accounts{display:grid;gap:8px;margin-top:8px}
+.acct{border-top:1px solid var(--line);padding-top:8px}
+.acct-head{display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-weight:700}
+.acct-head .acct-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cals{display:flex;flex-wrap:wrap;gap:4px 14px;margin-top:6px}
+.cals label{display:flex;align-items:center;gap:6px;font-size:13.5px;color:var(--ink)}
+.cals i{width:10px;height:10px;border-radius:50%;display:inline-block}
+.acct small{color:var(--muted);font-weight:400}
 .bites summary{cursor:pointer;font-weight:700;margin-top:10px}
 .moments{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-top:10px}
 .moment{border:1px solid var(--line);border-radius:14px;padding:10px;display:grid;gap:6px}
@@ -172,3 +180,4 @@ select option{background:#12141f}
 @media (prefers-reduced-motion:reduce){
   .card,.blob.popping,.blob.deadline::before,.blob.active::before,.blob.preview{animation:none}
 }
+button.small{padding:4px 11px;font-size:12.5px}

@@ -622,7 +622,6 @@
     const p = state.prefs;
     $('#sStart').value = hm(p.dayStart); $('#sEnd').value = hm(p.dayEnd); $('#sLunch').value = hm(p.lunch.start); $('#sBuffer').value = String(p.buffer);
     $('#sReal').checked = clock.real; $('#pack').value = store.get('blob.pack', 'blob');
-    $('#icsUrl').value = store.get('blob.icsUrl', '');
     $('#gId').value = conn.gId; $('#gSecret').value = conn.gSecret; $('#spId').value = conn.spId;
     refreshConnections();
   }
@@ -674,6 +673,7 @@
      overlap get new-time suggestions you approve; nothing of yours moves silently. A real calendar
      replaces the sample one. */
   function syncEvents(list, source, label, { quiet = false } = {}) {
+    list = list.map(e => ({ ...e, source }));
     const key = e => `${e.title}|${e.start}|${e.dur}`;
     const old = new Map(state.events.filter(e => e.source === source).map(e => [e.id, e]));
     const changed = list.filter(e => !old.has(e.id) || key(old.get(e.id)) !== key(e));
@@ -694,22 +694,95 @@
       showProposal({ kind: 'calendar', summary: `${label} changed: move ${n} blob${n === 1 ? '' : 's'}?`, reason: `${what}. ${n === 1 ? 'One of your blobs overlaps' : 'Some of your blobs overlap'} the new times, so here are the next open slots. Calendar events stay where they are.`, changes: moves, conflicts: [] });
     } else if (!quiet) reply(`${esc(what)}. None of your blobs overlap, so nothing else changes.`);
   }
-  const importEvents = (list, label) => syncEvents(list, 'Your calendar', label);
-  $('#icsFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; importEvents(parseICS(await f.text()), f.name); e.target.value = ''; };
+  /* ---------- calendars: any number of Google accounts and iCal links ---------- */
   const tauri = window.__TAURI__;
-  $('#icsUrlGo').onclick = async () => {
-    const url = $('#icsUrl').value.trim(); if (!url) return;
-    store.set('blob.icsUrl', url); $('#calMsg').textContent = 'Fetching your calendar…';
-    try {
-      const text = tauri?.core ? await tauri.core.invoke('fetch_text', { url }) : await (await fetch(url)).text();
-      importEvents(parseICS(text), 'Your calendar');
-    } catch (err) { $('#calMsg').textContent = tauri ? "Couldn't reach that calendar link. Check it's the secret iCal address." : 'Browsers block calendar links from other sites. In the Mac app this syncs directly; here, download the .ics and import it.'; }
-  };
-
-  /* ---------- connections: Google Calendar and Spotify (Mac app only) ---------- */
   const Links = window.BlobLinks;
   const conn = store.get('blob.conn', { gId: '', gSecret: '', spId: '' });
+  conn.accounts = conn.accounts || [];   // [{key, email, cals: {calendarId: {name, color, on}}}]
+  conn.links = conn.links || [];         // [{id, name, url, on}]
   const saveConn = () => store.set('blob.conn', conn);
+  const legacyLink = store.get('blob.icsUrl', '');
+  if (legacyLink && !conn.links.length) {
+    conn.links.push({ id: 'l' + Date.now().toString(36), name: 'Calendar', url: legacyLink, on: true });
+    store.set('blob.icsUrl', ''); saveConn();
+    state = { ...state, events: state.events.filter(e => e.source !== 'Your calendar') };
+  }
+  const acctSource = a => `Google: ${a.key}`;
+  const linkSource = l => `Link: ${l.id}`;
+  const stamp = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+  $('#icsFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; syncEvents(parseICS(await f.text()), `File: ${f.name}`, f.name); e.target.value = ''; };
+
+  async function fetchLink(url) { return tauri?.core ? tauri.core.invoke('fetch_text', { url }) : (await fetch(url)).text(); }
+  async function syncLink(l, quiet) {
+    if (!l.on) return syncEvents([], linkSource(l), l.name, { quiet: true });
+    const list = parseICS(await fetchLink(l.url)).map(e => ({ ...e, id: `${l.id}:${e.id}` }));
+    syncEvents(list, linkSource(l), l.name, { quiet });
+  }
+  async function loadCalendars(a) {
+    const cals = await Links.calendars(a.key), next = {};
+    for (const c of cals) next[c.id] = { name: c.name, color: c.color, on: a.cals[c.id] ? a.cals[c.id].on : (c.selected || c.primary) };
+    a.cals = next; a.email = (cals.find(c => c.primary) || {}).id || a.email; saveConn();
+  }
+  async function syncAccount(a, quiet) {
+    const from = E.dayOf(Date.now()), to = E.addDays(from, VISIBLE_DAYS);
+    const ids = Object.keys(a.cals).filter(id => a.cals[id].on);
+    const seen = new Set();
+    // The same meeting on two of your calendars should be one blob.
+    const list = (ids.length ? await Links.calendarEvents(a.key, ids, from, to) : [])
+      .filter(e => { const k = `${e.title}|${e.start}|${e.dur}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    syncEvents(list, acctSource(a), a.email || 'Google Calendar', { quiet });
+  }
+  let syncing = false;
+  async function syncAll(quiet = true) {
+    if (syncing) return; syncing = true;
+    const errs = [];
+    if (Links && Links.available) for (const a of conn.accounts) { try { await syncAccount(a, quiet); } catch (e) { errs.push(`${a.email || 'Google'}: ${String(e).slice(0, 100)}`); } }
+    for (const l of conn.links) { try { await syncLink(l, quiet); } catch (e) { errs.push(`${l.name}: ${tauri ? "couldn't reach the link" : 'browsers block calendar links, so this works in the Mac app'}`); } }
+    syncing = false;
+    const msg = errs.length ? `Sync problems: ${errs.join('; ')}` : `Synced ${stamp()}`;
+    $('#gMsg').textContent = conn.accounts.length ? msg : '';
+    $('#calMsg').textContent = conn.links.length ? msg : '';
+  }
+
+  function renderCalendars() {
+    $('#gAccounts').innerHTML = conn.accounts.map((a, i) => `<div class="acct" data-i="${i}">
+      <div class="acct-head"><span class="acct-name">${esc(a.email || 'Google account')}</span><button class="ghost small" data-drop>Disconnect</button></div>
+      <div class="cals">${Object.entries(a.cals).map(([id, c]) => `<label><input type="checkbox" data-cal="${esc(id)}" ${c.on ? 'checked' : ''}><i style="background:${esc(c.color)}"></i>${esc(c.name)}</label>`).join('') || '<small>Loading calendars…</small>'}</div></div>`).join('');
+    $$('#gAccounts .acct').forEach(row => {
+      const a = conn.accounts[+row.dataset.i];
+      row.querySelector('[data-drop]').onclick = async () => {
+        await Links.disconnect(a.key).catch(() => {});
+        conn.accounts.splice(conn.accounts.indexOf(a), 1); saveConn();
+        state = { ...state, events: state.events.filter(e => e.source !== acctSource(a)) }; save(); render(); renderCalendars();
+      };
+      row.querySelectorAll('[data-cal]').forEach(cb => cb.onchange = () => { a.cals[cb.dataset.cal].on = cb.checked; saveConn(); syncAccount(a, true).catch(e => { $('#gMsg').textContent = String(e).slice(0, 140); }); });
+    });
+    $('#icsLinks').innerHTML = conn.links.map((l, i) => `<div class="acct" data-i="${i}"><div class="acct-head">
+      <label class="check" style="display:flex;gap:6px;align-items:center"><input type="checkbox" data-on ${l.on ? 'checked' : ''}>${esc(l.name)}</label>
+      <small class="acct-name">${esc(l.url.replace(/^(https?|webcal):\/\//, '').slice(0, 60))}…</small><button class="ghost small" data-drop>Remove</button></div></div>`).join('');
+    $$('#icsLinks .acct').forEach(row => {
+      const l = conn.links[+row.dataset.i];
+      row.querySelector('[data-on]').onchange = e => { l.on = e.target.checked; saveConn(); syncLink(l, true).catch(() => {}); };
+      row.querySelector('[data-drop]').onclick = () => {
+        conn.links.splice(conn.links.indexOf(l), 1); saveConn();
+        state = { ...state, events: state.events.filter(e => e.source !== linkSource(l)) }; save(); render(); renderCalendars();
+      };
+    });
+    $('#gConnect').textContent = conn.accounts.length ? 'Add another Google account' : 'Connect Google Calendar';
+    $('#gSync').hidden = !conn.accounts.length;
+  }
+  $('#icsUrlGo').onclick = async () => {
+    const url = $('#icsUrl').value.trim(); if (!url) return;
+    const name = $('#icsName').value.trim() || `Calendar ${conn.links.length + 1}`;
+    const l = { id: 'l' + Date.now().toString(36), name, url, on: true };
+    $('#calMsg').textContent = 'Fetching your calendar…';
+    try { await syncLink(l, false); }
+    catch (err) { $('#calMsg').textContent = tauri ? "Couldn't reach that link. Check it's the iCal address." : 'Browsers block calendar links from other sites. This works in the Mac app; here, download the .ics and import it.'; return; }
+    conn.links.push(l); saveConn(); $('#icsUrl').value = $('#icsName').value = ''; renderCalendars();
+    $('#calMsg').textContent = `Added ${name}. Synced ${stamp()}.`;
+  };
+
   const music = (() => {
     const cfg = store.get('blob.music', { on: false, map: {} });
     let linked = false, current = null;
@@ -728,32 +801,31 @@
     };
   })();
   let calTimer = 0;
-  async function googleSync(quiet) {
-    const from = E.dayOf(Date.now()), to = E.addDays(from, VISIBLE_DAYS);
-    $('#gMsg').textContent = 'Syncing…';
-    try {
-      const list = await Links.calendarEvents(from, to);
-      $('#gMsg').textContent = `Synced ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
-      syncEvents(list, 'Google Calendar', 'Google Calendar', { quiet });
-    } catch (e) { $('#gMsg').textContent = `Sync failed: ${String(e).slice(0, 140)}`; }
-  }
   async function refreshConnections(announce = false) {
+    renderCalendars();
+    if (!calTimer && conn.links.length) { calTimer = setInterval(() => syncAll(true), 5 * 60000); syncAll(true); }
     if (!Links || !Links.available) {
-      $$('.conn').forEach(b => b.classList.add('off'));
+      $('#gBox').classList.add('off'); $('#spBox').classList.add('off');
       $('#gMsg').textContent = $('#spMsg').textContent = 'Works in the Mac app.';
       $('#gConnect').disabled = $('#spConnect').disabled = true;
       return;
     }
-    const [g, sp] = await Promise.all([Links.status('google'), Links.status('spotify')]);
-    $('#gConnect').hidden = g; $('#gSync').hidden = $('#gDisconnect').hidden = !g;
+    // An account connected before multi-account support lives under the plain "google" key.
+    if (!conn.accounts.some(a => a.key === 'google') && await Links.status('google')) {
+      conn.accounts.unshift({ key: 'google', email: '', cals: {} }); saveConn();
+      state = { ...state, events: state.events.filter(e => e.source !== 'Google Calendar') };
+    }
+    const sp = await Links.status('spotify');
     $('#spConnect').hidden = sp; $('#spDisconnect').hidden = !sp; $('#spMap').hidden = !sp;
     music.linked = sp;
-    if (g && !calTimer) {
+    for (const a of conn.accounts) if (!Object.keys(a.cals).length) await loadCalendars(a).catch(() => {});
+    renderCalendars();
+    if (conn.accounts.length) {
       // Real clock once a real calendar is in.
       if (!clock.real) { clock.real = true; store.set('blob.realClock', true); }
-      googleSync(!announce); calTimer = setInterval(() => googleSync(true), 5 * 60000);
+      if (!calTimer) calTimer = setInterval(() => syncAll(true), 5 * 60000);
+      syncAll(!announce);
     }
-    if (!g && calTimer) { clearInterval(calTimer); calTimer = 0; }
     if (sp) renderPicks();
   }
   async function renderPicks() {
@@ -770,15 +842,17 @@
   $('#spId').oninput = e => { conn.spId = e.target.value.trim(); saveConn(); };
   $('#gConnect').onclick = async () => {
     $('#gMsg').textContent = 'Finish signing in in your browser…';
-    try { await Links.connect('google', conn.gId, conn.gSecret); $('#gMsg').textContent = 'Connected.'; await refreshConnections(true); }
-    catch (e) { $('#gMsg').textContent = String(e).slice(0, 160); }
+    const a = { key: 'google:' + Date.now().toString(36), email: '', cals: {} };
+    try {
+      await Links.connect(a.key, conn.gId, conn.gSecret);
+      await loadCalendars(a);
+      if (conn.accounts.some(o => o.email && o.email === a.email)) { await Links.disconnect(a.key); $('#gMsg').textContent = `${a.email} is already connected.`; return; }
+      conn.accounts.push(a); saveConn();
+      $('#gMsg').textContent = `Connected ${a.email}. Pick which calendars to show.`;
+      await refreshConnections(true);
+    } catch (e) { $('#gMsg').textContent = String(e).slice(0, 160); }
   };
-  $('#gSync').onclick = () => googleSync(false);
-  $('#gDisconnect').onclick = async () => {
-    await Links.disconnect('google');
-    state = { ...state, events: state.events.filter(e => e.source !== 'Google Calendar') }; save(); render();
-    $('#gMsg').textContent = 'Disconnected. Your Google events are off the string.'; refreshConnections();
-  };
+  $('#gSync').onclick = () => syncAll(false);
   $('#spConnect').onclick = async () => {
     $('#spMsg').textContent = 'Finish signing in in your browser…';
     try { await Links.connect('spotify', conn.spId); $('#spMsg').textContent = 'Connected. Pick a playlist for each kind of blob.'; music.cfg.on = true; music.save(); await refreshConnections(); }
