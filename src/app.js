@@ -134,13 +134,16 @@
     return { x: b.left + b.width / 2 - l.left, y: b.top + b.height / 2 - l.top };
   }
 
+  // Same id, same silhouette: a blob keeps its shape across re-renders and restarts.
+  const seedOf = id => { let h = 7; for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) % 100003; return h / 97; };
+
   function makeNode(it) {
     const wrap = document.createElement('div'); wrap.className = 'node'; wrap.setAttribute('role', 'listitem');
     const el = document.createElement('button'); el.className = 'blob'; el.type = 'button';
     el.innerHTML = '<span class="face"><span class="t"></span><strong class="n"></strong><span class="d"></span></span>';
     wrap.appendChild(el); lane.appendChild(wrap);
     const n = { id: it.id, wrap, el, x: 0, y: 0, vx: 0, vy: 0, sc: 0.2, vs: 0, tx: 0, ty: 0, ts: 0, size: 0 };
-    n.jelly = new Jelly(el, { colors: catOf(it.cat).c, glow: true, radius: 0.46, points: 26, wobble: 1.1 });
+    n.jelly = new Jelly(el, { colors: catOf(it.cat).c, glow: true, radius: 0.43, points: 40, wobble: 1.1, seed: seedOf(it.id) });
     el.addEventListener('click', () => select(n.id));
     return n;
   }
@@ -148,7 +151,7 @@
   function paintNode(n, it) {
     const el = n.el, c = catOf(it.cat);
     const cls = ['blob', it.kind, it.past && 'past', it.missed && 'missed', it.kind === 'session' && timer && timer.id === it.id && 'active',
-      ui.selected === it.id && 'selected', c.light && 'light', ui.proposal && ui.proposal.touch.has(it.id) && 'preview'];
+      ui.selected === it.id && 'selected', ui.proposal && ui.proposal.touch.has(it.id) && 'preview'];
     let st = null;
     if (it.deadlineId) { st = E.deadlineStatus(state, it.deadlineId, now()); if (st) cls.push(st.state); }
     el.className = cls.filter(Boolean).join(' ');
@@ -230,39 +233,39 @@
       strand(brain, tgt, t, -1, 1);
     }
   }
-  // A strand is a glowing jelly bridge: thick where it meets each blob, pinched in the middle, and it
-  // thins out as it stretches.
+  // A strand is a glossy elastic thread: it leaves each blob at its edge, sags a little under its
+  // own weight and sways. Layers: a faint halo, a soft glow, the coloured core, a thin highlight.
+  const STRAND = '#b6a6ee';
   function strand(a, b, t, i, alpha) {
     const dx = b.x - a.x, dy = b.y - a.y, dist = Math.hypot(dx, dy) || 1, ux = dx / dist, uy = dy / dist;
     const ra = a.s * 0.4, rb = b.s * 0.4;
-    const span = dist - ra - rb; if (span < -10) return;
-    const w0 = Math.min(a.s, b.s) * 0.12, pinch = Math.max(1.5, w0 * Math.min(0.75, 36 / Math.max(10, span)));
-    const ax = a.x + ux * ra * 0.8, ay = a.y + uy * ra * 0.8, bx = b.x - ux * rb * 0.8, by = b.y - uy * rb * 0.8;
-    const mx = (ax + bx) / 2, my = (ay + by) / 2 + Math.sin(t * 2.1 + i) * 3;
-    const nx = -uy, ny = ux;
-    const grad = sg.createLinearGradient(ax, ay, bx, by); grad.addColorStop(0, a.c); grad.addColorStop(1, b.c);
-    sg.save(); sg.globalAlpha = alpha;
-    sg.shadowColor = b.c; sg.shadowBlur = 16; sg.fillStyle = grad;
-    sg.beginPath();
-    sg.moveTo(ax + nx * w0, ay + ny * w0);
-    sg.quadraticCurveTo(mx + nx * pinch, my + ny * pinch, bx + nx * w0, by + ny * w0);
-    sg.lineTo(bx - nx * w0, by - ny * w0);
-    sg.quadraticCurveTo(mx - nx * pinch, my - ny * pinch, ax - nx * w0, ay - ny * w0);
-    sg.closePath(); sg.fill();
-    sg.shadowBlur = 0; sg.globalAlpha = alpha * 0.55; sg.strokeStyle = 'rgba(255,255,255,.7)'; sg.lineWidth = Math.max(1, pinch * 0.35);
-    sg.beginPath(); sg.moveTo(ax + nx * w0 * 0.4, ay + ny * w0 * 0.4); sg.quadraticCurveTo(mx + nx * pinch * 0.4, my + ny * pinch * 0.4, bx + nx * w0 * 0.4, by + ny * w0 * 0.4); sg.stroke();
+    if (dist - ra - rb < -10) return;
+    const ax = a.x + ux * ra, ay = a.y + uy * ra, bx = b.x - ux * rb, by = b.y - uy * rb;
+    const sx = bx - ax, sy = by - ay, len = Math.hypot(sx, sy);
+    const sag = Math.min(27, len * 0.18) + Math.sin(t * 1.6 + i * 1.3) * 2.5;
+    const c1x = ax + sx * 0.42, c1y = ay + sy * 0.42 + sag, c2x = bx - sx * 0.42, c2y = by - sy * 0.42 + sag;
+    const curve = (off = 0) => { sg.beginPath(); sg.moveTo(ax, ay + off); sg.bezierCurveTo(c1x, c1y + off, c2x, c2y + off, bx, by + off); };
+    const tint = c => JellyColors.mix(c, STRAND, 0.55);
+    const grad = sg.createLinearGradient(ax, ay, bx, by); grad.addColorStop(0, tint(a.c)); grad.addColorStop(1, tint(b.c));
+    sg.save(); sg.lineCap = 'round';
+    curve(); sg.strokeStyle = grad;
+    sg.globalAlpha = alpha * 0.1; sg.lineWidth = 11; sg.stroke();
+    sg.globalAlpha = alpha * 0.3; sg.lineWidth = 5.5; sg.shadowColor = tint(b.c); sg.shadowBlur = 10; sg.stroke();
+    sg.shadowBlur = 0; sg.globalAlpha = alpha * 0.75; sg.lineWidth = 3; sg.stroke();
+    curve(-0.9); sg.globalAlpha = alpha * 0.55; sg.lineWidth = 0.8; sg.strokeStyle = '#f1e6ff'; sg.stroke();
     sg.restore();
   }
 
   /* ---------- the Brain ---------- */
-  const brainJelly = new Jelly($('#brain'), { colors: BRAIN, glow: true, radius: 0.45, points: 36, wobble: 0.9 });
+  const brainJelly = new Jelly($('#brain'), { colors: BRAIN, glow: true, radius: 0.42, points: 56, wobble: 0.9, seed: 2.1, bubbles: 22, aspect: 1.08 });
   const SEGS = 14;
   $('#gauge').innerHTML = Array.from({ length: SEGS }, (_, i) => {
     const a0 = (-160 + i * (140 / SEGS) + 1.5) * Math.PI / 180, a1 = (-160 + (i + 1) * (140 / SEGS) - 1.5) * Math.PI / 180, R = 66;
     const p = a => `${100 + Math.cos(a) * R} ${100 + Math.sin(a) * R}`;
-    return `<path d="M ${p(a0)} A ${R} ${R} 0 0 1 ${p(a1)}" stroke-width="9" stroke-linecap="round" fill="none"/>`;
+    return `<path d="M ${p(a0)} A ${R} ${R} 0 0 1 ${p(a1)}" stroke-width="4.5" stroke-linecap="round" fill="none"/>`;
   }).join('');
-  const segColor = i => { const t = i / (SEGS - 1); return t < 0.5 ? `hsl(${130 - t * 120} 100% 55%)` : `hsl(${70 - (t - 0.5) * 80} 100% 55%)`; };
+  // Lit segments are pale lime; the last few warm up as time runs out.
+  const segColor = i => { const t = i / (SEGS - 1); return t < 0.6 ? '#ddffa5' : `hsl(${80 - (t - 0.6) * 120} 100% 75%)`; };
 
   function renderBrain() {
     const n = now(), act = timer && session(timer.id);
@@ -290,7 +293,7 @@
       $('#go').disabled = !upcoming().some(x => x.kind === 'session');
       $('#finish').hidden = true;
     }
-    segs.forEach((s, i) => { const on = act && i < Math.ceil(frac * SEGS); s.setAttribute('stroke', on ? segColor(SEGS - 1 - i) : 'rgba(10,40,0,.35)'); });
+    segs.forEach((s, i) => { const on = act && i < Math.ceil(frac * SEGS); s.setAttribute('stroke', on ? segColor(SEGS - 1 - i) : 'rgba(221,255,176,.2)'); });
     $('#clockBadge').textContent = `${clock.real ? '' : 'Demo clock '}${clk(n)}${clock.speed > 1 ? ' · ' + clock.speed + '×' : ''}`;
     $('#dateLine').textContent = new Date(n).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
     $('#sampleBadge').hidden = !state.sample;
