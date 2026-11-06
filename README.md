@@ -42,7 +42,11 @@ BLOB signs in with **your own** Google and Spotify developer apps, so your data 
 3. Under **Clients**, create an OAuth client of type **Desktop app**. Copy its client ID and client secret.
 4. In BLOB, open Settings → Google Calendar, paste both, and press **Connect**.
 
-BLOB reads the calendars you have switched on in Google Calendar, for the next 7 days, every 5 minutes. All-day events, events marked "free", and events you declined are skipped.
+You can connect **several Google accounts** (add each one as a test user in step 2) and switch individual calendars on or off in Settings. BLOB reads the next 7 days every 5 minutes. All-day events, events marked "free", and events you declined are skipped.
+
+**Calendar links**
+
+Any calendar with an iCal link (Google's secret address, Outlook, iCloud, a shared team calendar) can be added in Settings → Calendar links. Add as many as you like; each can be switched off or removed.
 
 **Spotify (Premium needed for playback control)**
 

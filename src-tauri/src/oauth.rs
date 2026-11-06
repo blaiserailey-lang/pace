@@ -26,8 +26,13 @@ struct ProviderInfo {
     extra: &'static [(&'static str, &'static str)],
 }
 
+/// "google:2" is a second Google account: same provider, its own Keychain entry and tokens.
+fn kind(name: &str) -> &str {
+    name.split(':').next().unwrap_or(name)
+}
+
 fn provider(name: &str) -> Result<ProviderInfo, String> {
-    match name {
+    match kind(name) {
         "google" => Ok(ProviderInfo {
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
             token_url: "https://oauth2.googleapis.com/token",
@@ -45,7 +50,7 @@ fn provider(name: &str) -> Result<ProviderInfo, String> {
 
 /// Only these APIs can be called through the bridge.
 pub fn allowed_url(provider: &str, url: &str) -> bool {
-    let prefixes: &[&str] = match provider {
+    let prefixes: &[&str] = match kind(provider) {
         "google" => &["https://www.googleapis.com/calendar/v3/"],
         "spotify" => &["https://api.spotify.com/v1/"],
         _ => &[],
@@ -340,6 +345,9 @@ mod tests {
         assert!(allowed_url("spotify", "https://api.spotify.com/v1/me/player/play"));
         assert!(!allowed_url("google", "https://api.spotify.com/v1/me"));
         assert!(!allowed_url("spotify", "https://evil.example/v1/"));
+        assert!(allowed_url("google:2", "https://www.googleapis.com/calendar/v3/users/me/calendarList"));
+        assert!(provider("google:abc").is_ok());
+        assert!(provider("dropbox").is_err());
     }
 
     #[test]

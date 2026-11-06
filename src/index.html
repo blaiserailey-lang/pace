@@ -124,24 +124,29 @@
 
   <h3>Google Calendar</h3>
   <div id="gBox" class="conn">
-    <p class="note">Read-only. Your events become fixed blobs that Blob never moves, and it re-checks every 5 minutes. Uses your own Google Cloud “Desktop app” OAuth client (setup steps are in the README).</p>
+    <p class="note">Read-only. Your events become fixed blobs that Blob never moves, and it re-checks every 5 minutes. Add as many Google accounts as you like, then switch individual calendars on or off. Uses your own Google Cloud “Desktop app” OAuth client (setup steps are in the README).</p>
     <div class="grid">
       <label>Client ID<input id="gId" autocomplete="off" spellcheck="false"></label>
       <label>Client secret<input id="gSecret" type="password" autocomplete="off" spellcheck="false"></label>
     </div>
+    <div id="gAccounts" class="accounts"></div>
     <div class="row" style="margin-top:8px">
-      <button class="primary" id="gConnect">Connect Google Calendar</button>
+      <button class="primary" id="gConnect">Add a Google account</button>
       <button class="ghost" id="gSync" hidden>Sync now</button>
-      <button class="ghost danger" id="gDisconnect" hidden>Disconnect</button>
       <span class="note" id="gMsg" style="margin:0"></span>
     </div>
   </div>
-  <p class="note">Or without signing in: paste your calendar's “secret address in iCal format”, or import an .ics file.</p>
-  <div class="row">
-    <input id="icsUrl" class="grow" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" aria-label="Calendar link">
-    <button class="ghost" id="icsUrlGo">Sync link</button>
-    <label class="button ghost" for="icsFile">Import .ics</label>
-    <input id="icsFile" type="file" accept=".ics,text/calendar" class="sr-only">
+  <h3>Calendar links</h3>
+  <div class="conn">
+    <p class="note">For any calendar that gives you an iCal link (Google's “secret address in iCal format”, Outlook, iCloud, a shared team calendar). Links sync every 5 minutes in the Mac app.</p>
+    <div id="icsLinks" class="accounts"></div>
+    <div class="row" style="margin-top:8px">
+      <input id="icsName" placeholder="Name (e.g. Work)" aria-label="Calendar name" style="width:150px" class="grow">
+      <input id="icsUrl" class="grow" placeholder="https://…/basic.ics" aria-label="Calendar link">
+      <button class="ghost" id="icsUrlGo">Add link</button>
+      <label class="button ghost" for="icsFile">Import .ics</label>
+      <input id="icsFile" type="file" accept=".ics,text/calendar" class="sr-only">
+    </div>
   </div>
   <p class="note" id="calMsg"></p>
 

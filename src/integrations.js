@@ -24,29 +24,31 @@
     connect: (p, clientId, clientSecret) => invoke('oauth_connect', { provider: p, clientId, clientSecret: clientSecret || null, scopes: SCOPES[p] }),
     disconnect: p => invoke('oauth_disconnect', { provider: p }),
 
-    /* Timed events from your calendars that are switched on in Google Calendar, between two times.
-       All-day events, cancelled ones, ones you declined, and ones marked "free" are left out. */
-    async calendarEvents(from, to) {
-      const list = await api('google', 'GET', 'https://www.googleapis.com/calendar/v3/users/me/calendarList?' + qs({ minAccessRole: 'reader', maxResults: 50 }));
-      const cals = (list.items || []).filter(c => c.selected || c.primary);
+    /* The calendars on one Google account (provider "google" or "google:<id>" for extra accounts). */
+    async calendars(p) {
+      const list = await api(p, 'GET', 'https://www.googleapis.com/calendar/v3/users/me/calendarList?' + qs({ minAccessRole: 'reader', maxResults: 100 }));
+      return (list.items || []).map(c => ({ id: c.id, name: c.summaryOverride || c.summary || c.id, primary: !!c.primary, selected: !!c.selected, color: c.backgroundColor || '#888' }));
+    },
+
+    /* Timed events from the given calendars between two times. All-day events, cancelled ones,
+       ones you declined, and ones marked "free" are left out. */
+    async calendarEvents(p, calIds, from, to) {
       const out = [];
-      for (const cal of cals) {
+      for (const calId of calIds) {
         let pageToken = '';
         do {
-          const res = await api('google', 'GET', `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(cal.id)}/events?` +
+          const res = await api(p, 'GET', `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calId)}/events?` +
             qs({ singleEvents: 'true', orderBy: 'startTime', timeMin: new Date(from).toISOString(), timeMax: new Date(to).toISOString(), maxResults: 250, ...(pageToken ? { pageToken } : {}) }));
           for (const ev of res.items || []) {
             if (ev.status === 'cancelled' || !ev.start || !ev.start.dateTime || ev.transparency === 'transparent') continue;
             if ((ev.attendees || []).some(a => a.self && a.responseStatus === 'declined')) continue;
             const start = Date.parse(ev.start.dateTime), end = Date.parse(ev.end.dateTime);
-            out.push({ id: `g-${cal.id}-${ev.id}`, title: ev.summary || 'Busy', start, dur: Math.max(5, Math.round((end - start) / MIN)), cat: guessCat(ev.summary || ''), source: 'Google Calendar' });
+            out.push({ id: `g-${calId}-${ev.id}`, title: ev.summary || 'Busy', start, dur: Math.max(5, Math.round((end - start) / MIN)), cat: guessCat(ev.summary || ''), calendar: calId });
           }
           pageToken = res.nextPageToken || '';
         } while (pageToken);
       }
-      // The same meeting on two calendars should be one blob.
-      const seen = new Set();
-      return out.sort((a, b) => a.start - b.start).filter(e => { const k = `${e.title}|${e.start}|${e.dur}`; if (seen.has(k)) return false; seen.add(k); return true; });
+      return out.sort((a, b) => a.start - b.start);
     },
 
     async playlists() {
