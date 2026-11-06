@@ -17,9 +17,13 @@
   const hex = h => { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); };
   const mix = (a, b, t) => { const x = hex(a), y = hex(b); return `rgb(${x.map((v, i) => Math.round(v + (y[i] - v) * t)).join(',')})`; };
   const rgba = (h, a) => `rgba(${hex(h).join(',')},${a})`;
+  // like rgba() but also takes the 'rgb(r,g,b)' strings mix() returns
+  const rgbaOf = (c, a) => c[0] === '#' ? rgba(c, a) : c.replace('rgb(', 'rgba(').replace(')', `,${a})`);
 
   class Jelly {
-    /* host: element the canvas fills. opts: {colors:[c1,c2?], wobble, seed, points, glow, radius}
+    /* host: element the canvas fills. opts: {colors:[c1,c2?], rim, wobble, seed, points, glow, radius, lumpy, aspect}
+       rim: an optional colour for a band around the edge (where a blob came from, e.g. its calendar).
+       lumpy: how irregular the silhouette is (0 = round). aspect: >1 makes it wider than tall.
        glow: neon look for dark backgrounds (outer glow + floor light); the canvas then overhangs the
        host so the glow isn't clipped. radius: body radius as a share of the host's smaller side. */
     constructor(host, opts = {}) {
@@ -38,6 +42,14 @@
       this.idle = opts.wobble ?? 1;
       this.colors = opts.colors || ['#8ad62f'];
       this.color = this.colors.slice(); this.target = this.colors.slice(); this.colorT = 1;
+      this.rim = opts.rim || null;
+      this.lumpy = opts.lumpy ?? 1; this.aspect = opts.aspect ?? 1.06;
+      this.lobes = Float32Array.from({ length: this.n }, (_, i) => this.lobeAt(i / this.n * Math.PI * 2));
+      // bubbles: fixed spots near the edge, a few bigger ones, mostly tiny
+      let r = this.seed * 9301 + 49297; const rnd = () => (r = (r * 9301 + 49297) % 233280) / 233280;
+      this.bubbles = Array.from({ length: opts.bubbles ?? 16 }, (_, i) => ({
+        a: rnd() * Math.PI * 2, inset: 0.6 + rnd() * 0.24, r: i % 4 === 0 ? 0.055 + rnd() * 0.03 : 0.014 + rnd() * 0.026,
+        o: i % 3 === 0 ? 0.7 : 0.48, ph: rnd() * 6 }));
       this.pointer = null;
       this.resize();
       new ResizeObserver(() => this.resize()).observe(host);
@@ -54,6 +66,7 @@
       this.g.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.R = Math.min(hw, hh) * this.radius;
     }
+    setRim(c) { if (c !== this.rim) { this.rim = c || null; this.jiggle(0.3); } }
     setColors(colors) {
       const c = colors.length > 1 ? colors : [colors[0], colors[0]];
       this.color = this.current(); this.target = c.slice(); this.colorT = 0;
@@ -116,61 +129,104 @@
       this.vsq += (-90 * this.sq - 6 * this.vsq) * dt; this.sq += this.vsq * dt; this.sq = Math.max(-0.25, Math.min(0.25, this.sq));
       if (this.colorT < 1) this.colorT = Math.min(1, this.colorT + dt * 1.6);
     }
+    /* The resting silhouette: a few slow lobes so each blob is a lumpy cloud, not a ball.
+       Same seed, same shape, so a blob keeps its face between reloads. */
+    lobeAt(a) {
+      const s = this.seed, k = this.lumpy;
+      return k * (0.02 * Math.sin(2 * a + s * 0.6) + 0.038 * Math.sin(4 * a + s) + 0.028 * Math.sin(6 * a + s * 1.7) + 0.016 * Math.sin(9 * a + s * 2.3));
+    }
     path() {
-      const n = this.n, pts = [], ox = this.w / 2 + this.cx, oy = this.h / 2 + this.cy + this.R * 0.04;
-      const sx = 1 + this.sq * 0.5, sy = 1 - this.sq;
+      const n = this.n, pts = [], rad = [], ox = this.w / 2 + this.cx, oy = this.h / 2 + this.cy + this.R * 0.04;
+      const sx = (1 + this.sq * 0.5) * this.aspect, sy = (1 - this.sq) / this.aspect;
       for (let i = 0; i < n; i++) {
-        const a = i / n * Math.PI * 2, r = this.R + this.d[i];
-        pts.push([ox + Math.cos(a) * r * sx, oy + Math.sin(a) * r * sy]);
+        const a = i / n * Math.PI * 2, r = this.R * (1 + this.lobes[i]) + this.d[i];
+        rad.push(r); pts.push([ox + Math.cos(a) * r * sx, oy + Math.sin(a) * r * sy]);
       }
       const p = new Path2D();
       const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
       let m = mid(pts[n - 1], pts[0]); p.moveTo(m[0], m[1]);
       for (let i = 0; i < n; i++) { const nx = mid(pts[i], pts[(i + 1) % n]); p.quadraticCurveTo(pts[i][0], pts[i][1], nx[0], nx[1]); }
       p.closePath();
-      return { p, ox, oy };
+      // a point just inside the surface at angle a (follows every dent and wobble)
+      const at = (a, inset) => {
+        const f = ((a / (Math.PI * 2)) % 1 + 1) % 1 * n, i = Math.floor(f) % n, u = f - Math.floor(f);
+        const r = (rad[i] * (1 - u) + rad[(i + 1) % n] * u) * inset;
+        return [ox + Math.cos(a) * r * sx, oy + Math.sin(a) * r * sy];
+      };
+      return { p, ox, oy, at };
     }
+    /* The material (shared by the Brain, task blobs and anything else made of jelly): a deep,
+       see-through body that is darkest in the middle, a bright gradient rim with a soft bloom,
+       light pooling along the bottom, curved specular streaks that follow the surface, and
+       bubbles suspended near the edge. Colours come from the blob's two colours. */
     draw() {
-      const g = this.g, R = this.R, [c1, c2] = this.current();
+      const g = this.g, R = this.R, [c1, c2] = this.current(), dim = this.dim ?? 1;
       g.clearRect(0, 0, this.w, this.h);
-      const { p, ox, oy } = this.path();
+      const { p, ox, oy, at } = this.path();
+      const light = mix(c1, '#ffffff', 0.55), mid = mix(c2, c1, 0.35), depth = mix(c2, '#000000', 0.42),
+        dark = mix(c2, '#0a0716', 0.78), glow = mix(c2, c1, 0.2);
+      const top = oy - R, bot = oy + R;
+      // bloom behind the body
       if (this.glow) {
-        // light pooling on the floor, then a neon halo behind the body
-        g.save(); g.globalAlpha = 0.45 * (this.dim ?? 1); g.fillStyle = c2; g.filter = `blur(${Math.max(4, R * 0.18)}px)`;
-        g.beginPath(); g.ellipse(this.w / 2 + this.cx * 0.5, oy + R * 1.08, R * 0.8, R * 0.13, 0, 0, Math.PI * 2); g.fill(); g.restore();
-        g.save(); g.globalAlpha = 0.55 * (this.dim ?? 1); g.shadowColor = c1; g.shadowBlur = R * 0.55; g.fillStyle = c2; g.fill(p); g.restore();
+        g.save(); g.globalAlpha = 0.5 * dim; g.shadowColor = glow; g.shadowBlur = R * 0.32;
+        g.lineWidth = R * 0.06; g.strokeStyle = glow; g.stroke(p); g.restore();
       } else {
-        // contact shadow
         g.save(); g.fillStyle = 'rgba(20,24,50,.16)'; g.filter = 'blur(6px)';
         g.beginPath(); g.ellipse(this.w / 2 + this.cx * 0.5, oy + R * (1 - this.sq) * 0.98, R * 0.78, R * 0.12, 0, 0, Math.PI * 2); g.fill(); g.restore();
       }
-      // body: the two colours run diagonally, lit from the top-left
+      // body: lit at the top, deep in the middle, glowing again underneath
+      const body = g.createLinearGradient(ox - R * 0.25, top, ox + R * 0.25, bot);
+      body.addColorStop(0, mid); body.addColorStop(0.27, depth); body.addColorStop(0.59, dark); body.addColorStop(0.8, depth); body.addColorStop(1, glow);
+      g.save(); g.globalAlpha = 0.92; g.fillStyle = body; g.fill(p); g.restore();
+      const rimGrad = g.createLinearGradient(ox - R * 0.65, top, ox + R * 0.55, bot);
+      rimGrad.addColorStop(0, light); rimGrad.addColorStop(0.26, mid); rimGrad.addColorStop(0.55, depth); rimGrad.addColorStop(0.8, glow); rimGrad.addColorStop(1, light);
+      const shine = g.createLinearGradient(ox - R * 0.9, top, ox + R * 0.9, oy + R * 0.6);
+      shine.addColorStop(0, rgbaOf(light, 0)); shine.addColorStop(0.32, rgbaOf(light, 0.92)); shine.addColorStop(0.66, 'rgba(255,255,255,.75)'); shine.addColorStop(1, rgbaOf(light, 0));
       g.save(); g.clip(p);
-      const lin = g.createLinearGradient(ox - R, oy - R, ox + R, oy + R);
-      lin.addColorStop(0, c1); lin.addColorStop(1, c2);
-      g.fillStyle = lin; g.fill(p);
-      const shade = g.createRadialGradient(ox - R * 0.3, oy - R * 0.35, R * 0.1, ox, oy, R * 1.25);
-      shade.addColorStop(0, 'rgba(255,255,255,.38)'); shade.addColorStop(0.45, 'rgba(255,255,255,0)'); shade.addColorStop(1, 'rgba(0,10,40,.32)');
-      g.fillStyle = shade; g.fill(p);
-      // see-through depth: a lighter core and a few suspended bubbles
-      const core = g.createRadialGradient(ox + R * 0.15, oy + R * 0.25, 0, ox + R * 0.15, oy + R * 0.25, R * 0.7);
-      core.addColorStop(0, 'rgba(255,255,255,.16)'); core.addColorStop(1, 'rgba(255,255,255,0)');
-      g.fillStyle = core; g.fill(p);
-      const t = performance.now() / 1000;
-      g.fillStyle = 'rgba(255,255,255,.28)';
-      for (let i = 0; i < 4; i++) {
-        const a = this.seed + i * 1.9, rr = R * (0.68 + 0.14 * ((i * 37 + this.seed) % 1));
-        const bx = ox + Math.cos(a) * rr, by = oy + Math.sin(a) * rr + Math.sin(t * 0.8 + i) * R * 0.02;
-        g.beginPath(); g.arc(bx, by, R * (0.025 + i * 0.008), 0, Math.PI * 2); g.fill();
+      // caustics: light gathering in the belly and a softer wash near the top
+      const cau = (x, y, rx, ry, a) => {
+        g.save(); g.globalAlpha = a; g.translate(x, y); g.scale(1, ry / rx);
+        const rg = g.createRadialGradient(0, 0, 0, 0, 0, rx);
+        rg.addColorStop(0, rgbaOf(light, 0.82)); rg.addColorStop(0.43, rgbaOf(glow, 0.28)); rg.addColorStop(1, rgbaOf(glow, 0));
+        g.fillStyle = rg; g.beginPath(); g.arc(0, 0, rx, 0, Math.PI * 2); g.fill(); g.restore();
+      };
+      cau(ox, oy + R * 0.92, R * 1.05, R * 0.5, 0.75);
+      cau(ox - R * 0.05, oy - R * 0.72, R * 0.68, R * 0.24, 0.4);
+      // the inside of the rim: a wide soft band, then a thin bright line that catches the light
+      g.lineWidth = R * 0.13; g.globalAlpha = 0.43; g.strokeStyle = rimGrad; g.stroke(p);
+      g.lineWidth = R * 0.045; g.globalAlpha = 0.9; g.strokeStyle = shine; g.stroke(p);
+      g.globalAlpha = 1;
+      // bubbles suspended near the edge
+      const tt = performance.now() / 1000;
+      for (const b of this.bubbles) {
+        const [bx, by] = at(b.a + Math.sin(tt * 0.35 + b.ph) * 0.03, b.inset);
+        const br = R * b.r, y = by + Math.sin(tt * 0.8 + b.ph) * R * 0.012;
+        const bg = g.createRadialGradient(bx - br * 0.4, y - br * 0.5, 0, bx, y, br);
+        bg.addColorStop(0, rgbaOf(light, 0.85)); bg.addColorStop(0.3, rgbaOf(mid, 0.4)); bg.addColorStop(0.7, rgbaOf(dark, 0.42)); bg.addColorStop(1, rgbaOf(light, 0.66));
+        g.globalAlpha = b.o; g.fillStyle = bg; g.beginPath(); g.arc(bx, y, br, 0, Math.PI * 2); g.fill();
+        g.lineWidth = 0.8; g.strokeStyle = rgbaOf(light, 0.3); g.stroke();
       }
+      g.globalAlpha = 1;
+      // specular streaks: curved highlights that ride just inside the surface
+      g.lineCap = 'round';
+      const streak = (a0, a1, inset, w, alpha) => {
+        g.beginPath();
+        for (let k = 0; k <= 14; k++) { const [x, y] = at(a0 + (a1 - a0) * k / 14, inset); k ? g.lineTo(x, y) : g.moveTo(x, y); }
+        g.globalAlpha = alpha; g.lineWidth = w; g.strokeStyle = shine; g.stroke();
+      };
+      const D = Math.PI / 180;
+      streak(188 * D, 252 * D, 0.8, Math.max(2, R * 0.045), 0.9);
+      streak(282 * D, 318 * D, 0.8, Math.max(1.5, R * 0.032), 0.7);
+      streak(142 * D, 168 * D, 0.82, Math.max(1.2, R * 0.026), 0.6);
+      streak(55 * D, 82 * D, 0.84, Math.max(1.2, R * 0.024), 0.45);
       g.restore();
-      // glossy rim + specular highlight
-      g.save(); g.lineWidth = Math.max(1.5, R * 0.03); g.strokeStyle = 'rgba(255,255,255,.45)'; g.stroke(p); g.restore();
-      g.save(); g.clip(p);
-      g.fillStyle = 'rgba(255,255,255,.75)'; g.filter = `blur(${Math.max(1, R * 0.03)}px)`;
-      g.beginPath(); g.ellipse(ox - R * 0.38 + this.cx * 0.2, oy - R * 0.5, R * 0.26, R * 0.11, -0.55, 0, Math.PI * 2); g.fill();
-      g.beginPath(); g.arc(ox - R * 0.08, oy - R * 0.66, R * 0.045, 0, Math.PI * 2); g.fill();
-      g.restore();
+      // optional colour band around the edge (where a blob came from, e.g. its calendar)
+      if (this.rim) {
+        g.save(); g.globalAlpha = dim; g.lineWidth = Math.max(3, R * 0.1); g.strokeStyle = this.rim;
+        g.shadowColor = this.rim; g.shadowBlur = R * 0.25; g.stroke(p); g.restore();
+      }
+      // the outer rim itself
+      g.save(); g.lineWidth = Math.max(1.5, R * 0.022); g.strokeStyle = rimGrad; g.stroke(p); g.restore();
     }
     /* Pop: squash, burst outwards and fade. Resolves when finished. */
     pop() {
