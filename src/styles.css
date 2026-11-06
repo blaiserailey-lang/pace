@@ -98,6 +98,17 @@ canvas.jelly.glow{inset:-30%;width:160%;height:160%}
 @keyframes halo{to{transform:rotate(360deg)}}
 @keyframes previewPulse{50%{transform:scale(1.07);filter:brightness(1.3)}}
 
+.blob.draggable{cursor:grab;touch-action:none}
+.blob.dragging{cursor:grabbing;filter:brightness(1.15) drop-shadow(0 0 24px rgba(198,255,61,.45))}
+.blob.locked .face::before{content:"";position:absolute;top:-14%;left:50%;width:9px;height:7px;margin-left:-4.5px;border-radius:2px;background:rgba(255,255,255,.85);
+  box-shadow:0 -5px 0 -1px transparent;opacity:.8}
+.blob.locked .face::after{content:"";position:absolute;top:calc(-14% - 6px);left:50%;width:5px;height:6px;margin-left:-3.5px;border:2px solid rgba(255,255,255,.85);border-bottom:0;border-radius:4px 4px 0 0;opacity:.8}
+.dropmark{position:absolute;z-index:6;transform:translateX(-50%);pointer-events:none;font-family:var(--mono);font-size:11.5px;font-weight:700;color:#0d1400;white-space:nowrap;
+  background:linear-gradient(135deg,var(--lime),var(--lime2));padding:3px 9px;border-radius:12px 10px 13px 9px;box-shadow:0 0 16px rgba(198,255,61,.5)}
+.dropmark::after{content:"";position:absolute;left:50%;top:100%;width:2px;height:110px;margin-left:-1px;background:linear-gradient(var(--lime),transparent)}
+.dropmark.lockmsg{background:rgba(22,24,38,.95);color:var(--ink);border:1px solid var(--line);box-shadow:none}
+.dropmark.lockmsg::after{display:none}
+
 /* Context card: appears for a blob or a suggestion, then goes away */
 .card{position:fixed;left:50%;bottom:118px;transform:translateX(-50%);width:min(560px,calc(100vw - 32px));max-height:calc(100vh - 220px);overflow:auto;z-index:20;
   background:var(--panel);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);border:1px solid var(--line);border-radius:22px;padding:16px 18px;
@@ -113,6 +124,18 @@ canvas.jelly.glow{inset:-30%;width:160%;height:160%}
 .card .changes li{display:flex;gap:8px;align-items:center}
 .card .changes .op{font-family:var(--mono);font-size:11px;padding:1px 7px;border-radius:6px;background:rgba(255,255,255,.08);color:var(--muted);min-width:56px;text-align:center}
 .card .actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:12px}
+.card .grow{flex:1;min-width:0}
+.card .edit-name{display:block;width:100%;margin-top:6px;background:transparent;border:0;border-radius:0;box-shadow:none;border-bottom:1.5px dashed var(--line);font-family:var(--display);font-weight:800;font-size:19px;padding:2px 0}
+.card .edit-name:focus{outline:none;border-bottom-color:var(--lime)}
+.card .kinds{display:flex;flex-wrap:wrap;gap:8px;margin-top:6px}
+.card .kindsw{width:62px;height:62px;padding:4px;border:0;font-size:10.5px;line-height:1.1;font-weight:700;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5);
+  border-radius:52% 48% 46% 54%/55% 45% 55% 45%;background:radial-gradient(circle at 34% 28%,rgba(255,255,255,.45),rgba(255,255,255,0) 30%),radial-gradient(circle at 50% 60%,var(--a),var(--b) 80%);
+  transition:transform .2s cubic-bezier(.3,1.6,.5,1)}
+.card .kindsw.light{color:#14213a;text-shadow:none}
+.card .kindsw:hover{background:radial-gradient(circle at 34% 28%,rgba(255,255,255,.55),rgba(255,255,255,0) 30%),radial-gradient(circle at 50% 60%,var(--a),var(--b) 80%);transform:scale(1.06)}
+.card .kindsw[aria-pressed="true"]{transform:scale(1.1);box-shadow:0 0 0 3px #0b0d16,0 0 0 5px var(--lime)}
+.card .lenrow{margin-top:4px}
+.card .len{font-family:var(--mono);font-weight:700;min-width:120px;text-align:center}
 .card .from{font-size:12px;color:var(--muted);margin-top:10px}
 .status{display:inline-flex;align-items:center;gap:6px;font-weight:700;font-size:13px;padding:2px 10px;border-radius:999px;border:1px solid var(--st);color:var(--st)}
 .status::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--st);box-shadow:0 0 8px var(--st)}
