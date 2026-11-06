@@ -1,149 +1,158 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Blobs</title>
+<title>BLOB</title>
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<div class="wrap">
-  <header>
-    <div>
-      <h1>Blobs<span>.</span></h1>
-      <p class="sub" id="dateLine"></p>
+<div class="app">
+  <header class="top">
+    <div class="brand">
+      <span class="wordmark" aria-label="BLOB">BLOB</span>
+      <span class="when" id="dateLine"></span>
+      <span class="badge" id="sampleBadge" title="Calendar, inbox and tasks here are made-up examples until you connect your own.">Sample data</span>
     </div>
-    <div class="row">
-      <span class="pill" id="count"></span>
-      <span class="pill"><span class="dot"></span><span id="music">Music: Work mix</span></span>
+    <div class="tools">
+      <span class="badge clock" id="clockBadge" role="status"></span>
+      <button class="ghost" id="addBlob">+ Blob</button>
+      <button class="ghost" id="addDeadline">+ Deadline</button>
+      <div class="zoom" role="group" aria-label="Zoom">
+        <button class="ghost icon" id="zoomOut" aria-label="Zoom out">−</button>
+        <button class="ghost icon" id="zoomIn" aria-label="Zoom in">+</button>
+      </div>
+      <button class="ghost" id="jumpNow">Now</button>
+      <button class="ghost icon" id="openSettings" aria-label="Settings">⚙</button>
     </div>
   </header>
 
-  <main class="hero">
-    <div id="big" class="bigblob" role="button" tabindex="0" aria-expanded="false" aria-controls="tray" aria-label="Current blob. Press to show today's blobs.">
-      <div class="face">
-        <span class="cat" id="bigCat">Focus</span>
-        <strong class="name" id="bigName">Your task</strong>
-        <span class="time" id="time" role="timer" aria-live="off">50:00</span>
-        <span class="next" id="bigNext"></span>
+  <main class="stage" id="stage">
+    <canvas class="strands" id="strands" aria-hidden="true"></canvas>
+    <section class="brain-wrap" aria-label="Brain: current timer">
+      <div class="brain" id="brain">
+        <svg class="gauge" id="gauge" viewBox="0 0 200 200" aria-hidden="true"></svg>
+        <div class="face">
+          <span class="lbl" id="brainLbl">Up next</span>
+          <span class="time" id="brainTime" role="timer" aria-live="off">--:--</span>
+          <strong class="ttl" id="brainTitle"></strong>
+          <span class="sub" id="brainSub"></span>
+        </div>
       </div>
+      <div class="brain-ctl">
+        <button class="primary" id="go">Start</button>
+        <button class="ghost" id="finish" hidden>Done</button>
+      </div>
+    </section>
+    <div class="track" id="track" tabindex="0" aria-label="Your day as a string of blobs. Scroll sideways to pan.">
+      <div class="lane" id="lane" role="list"></div>
     </div>
-    <p class="say" id="say" aria-live="polite"></p>
-    <div class="controls">
-      <button class="primary" id="go">Start day</button>
-      <button id="skip">Done, next blob</button>
-      <button id="plus">+5 min</button>
-      <button id="checkin">Check in</button>
-      <button id="speed" aria-pressed="false">Demo speed: off</button>
-    </div>
-    <p class="hint" id="hint">Tap the big blob to see what’s coming up</p>
   </main>
 
-  <section id="tray" class="tray" hidden aria-labelledby="trayTitle">
-    <div class="tray-head">
-      <div>
-        <h2 id="trayTitle">Coming up</h2>
-        <span class="label" id="traySum"></span>
-      </div>
-      <div class="row">
-        <button id="addBlob">Add a blob</button>
-        <button id="shuffle">Shuffle</button>
-        <button id="replan">Re-plan</button>
-        <button id="trayClose" aria-label="Close">Close</button>
-      </div>
+  <section class="card" id="card" hidden aria-live="polite"></section>
+
+  <form class="ask" id="ask" autocomplete="off">
+    <div class="ask-row">
+      <input id="askInput" placeholder="Tell Blob what changed… (rule-based helper, not AI)" aria-label="Ask Blob">
+      <button class="primary" type="submit">Send</button>
     </div>
-    <p class="note">Drag blobs to rearrange your day. Tap one to edit it. Shuffle mixes things up but keeps calendar events and meals where they are.</p>
-    <div class="blobs" id="blobs" role="list"></div>
-    <div class="legend" id="legend" aria-label="Color key"></div>
-  </section>
-
-  <details class="setup">
-    <summary><h2>Set up your day</h2><span class="label">Projects, calendar, rhythm, sounds</span></summary>
-
-    <section class="panel">
-      <div class="row" style="justify-content:space-between">
-        <h3>Projects</h3>
-        <button id="add">Add project</button>
-      </div>
-      <div class="tbl">
-        <table>
-          <thead><tr><th><span class="sr-only">Color</span></th><th>Project</th><th>Type</th><th>Due</th><th>Hrs left</th><th></th></tr></thead>
-          <tbody id="projects"></tbody>
-        </table>
-      </div>
-      <p class="note">Blobs works back from each deadline: hours left ÷ days left sets today's share. Work projects get cool colors, personal ones warm colors. Tap a color dot to change it.</p>
-    </section>
-
-    <section class="panel">
-      <h3>Calendar</h3>
-      <p class="note">Calendar events become blobs at their real times, and focus blobs fill the gaps.</p>
-      <div class="row cal-row">
-        <label class="button" for="icsFile">Import .ics</label>
-        <input id="icsFile" type="file" accept=".ics,text/calendar" class="sr-only">
-        <button id="sampleDay">Add example events</button>
-        <button id="clearCal">Clear</button>
-      </div>
-      <div class="row cal-row">
-        <input id="icsUrl" class="grow" placeholder="Google Calendar secret address in iCal format" aria-label="Calendar iCal link">
-        <button id="icsUrlGo">Sync</button>
-      </div>
-      <p class="note" id="calMsg">In Google Calendar: Settings → your calendar → “Secret address in iCal format”.</p>
-      <ul class="events" id="eventList"></ul>
-    </section>
-
-    <section class="panel">
-      <h3>Your rhythm</h3>
-      <div class="settings">
-        <label for="dayStart">Day starts<input id="dayStart" type="time" value="10:00"></label>
-        <label for="dayEnd">Day ends<input id="dayEnd" type="time" value="18:00"></label>
-        <label for="focus">Focus blob (min)<input id="focus" type="number" min="15" max="120" value="50"></label>
-        <label for="snack">Snack break (min)<input id="snack" type="number" min="5" max="30" value="10"></label>
-        <label for="meal">Meal at<input id="meal" type="time" value="13:00"></label>
-        <label for="pack">Sounds
-          <select id="pack"><option value="blob">Bloop</option><option value="soft">Soft chimes</option><option value="crisp">Crisp beeps</option></select>
-        </label>
-      </div>
-      <div class="pack">
-        <button data-snd="start">Blob start</button>
-        <button data-snd="warn">5-min warning</button>
-        <button data-snd="end">Time's up</button>
-        <button data-snd="done">Day complete</button>
-      </div>
-    </section>
-
-    <section class="panel">
-      <h3>Sound bites &amp; catchphrases</h3>
-      <p class="note">Give each moment your own clip and lines. Upload any audio or video clip, trim it to the bite, and Blobs plays it instead of the built-in sound. Lines show under the big blob; several per moment get picked at random.</p>
-      <div class="moments" id="moments"></div>
-    </section>
-  </details>
+    <div class="chips" id="chips">
+      <button type="button" data-ask="add a deadline">Add a deadline</button>
+      <button type="button" data-ask="I'm running 20 min late">I'm running 20 min late</button>
+      <button type="button" data-ask="move my next session to tomorrow">Move next session to tomorrow</button>
+      <button type="button" data-ask="what's next?">What's next?</button>
+      <button type="button" data-ask="check my inbox">Inbox (sample)</button>
+      <button type="button" class="demo" data-demo="calendar">Demo: calendar change</button>
+      <button type="button" class="demo" data-demo="skip">Demo: skip ahead 1 hour</button>
+    </div>
+  </form>
 </div>
 
-<dialog id="editDlg" aria-labelledby="editTitle">
-  <form id="editForm">
-    <h2 id="editTitle">Edit blob</h2>
-    <div class="settings">
-      <label for="eName" class="wide">What is it?<input id="eName" maxlength="60" required></label>
-      <label for="eKind" class="wide">Type<select id="eKind"></select></label>
-      <label for="eDur">Minutes<input id="eDur" type="number" min="5" max="240" step="5"></label>
+<dialog id="deadlineDlg" aria-labelledby="dlTitle">
+  <form id="deadlineForm" method="dialog">
+    <h2 id="dlTitle">Add a deadline</h2>
+    <p class="note">Blob doesn't guess how long work takes. You decide how many sessions you want and how long each one is, and Blob finds open time before it's due.</p>
+    <div class="grid">
+      <label class="wide">What's due?<input id="dlName" maxlength="60" required placeholder="Pitch deck"></label>
+      <label>Due date<input id="dlDate" type="date" required></label>
+      <label>Due time<input id="dlTime" type="time" value="17:00" required></label>
+      <label>Sessions you want<select id="dlCount"><option>1</option><option selected>2</option><option>3</option><option>4</option><option>5</option></select></label>
+      <label>Each session<select id="dlLen"><option value="30">30 min</option><option value="45">45 min</option><option value="60" selected>60 min</option><option value="90">90 min</option><option value="120">2 hours</option></select></label>
+      <label class="wide">Kind<select id="dlCat"></select></label>
     </div>
-    <div class="row" style="margin-top:14px">
-      <button type="button" id="eEarlier">Earlier</button>
-      <button type="button" id="eLater">Later</button>
-      <button type="button" id="eNow">Do it next</button>
-      <button type="button" id="eDelete" class="danger">Delete</button>
-    </div>
-    <div class="row" style="justify-content:flex-end;margin-top:16px">
-      <button type="button" id="eCancel">Cancel</button>
-      <button type="submit" class="primary">Save</button>
+    <div class="row end">
+      <button type="button" class="ghost" data-close>Cancel</button>
+      <button type="submit" class="primary">Find time</button>
     </div>
   </form>
 </dialog>
+
+<dialog id="blobDlg" aria-labelledby="bTitle">
+  <form id="blobForm" method="dialog">
+    <h2 id="bTitle">Add a blob</h2>
+    <div class="grid">
+      <label class="wide">What is it?<input id="bName" maxlength="60" required placeholder="Reply to the label"></label>
+      <label>Kind<select id="bCat"></select></label>
+      <label>Length<select id="bLen"><option value="15">15 min</option><option value="30" selected>30 min</option><option value="45">45 min</option><option value="60">60 min</option><option value="90">90 min</option></select></label>
+      <label class="wide">When<select id="bWhen"><option value="next">Next open time</option><option value="at">At a time…</option></select></label>
+      <label class="wide" id="bAtWrap" hidden>Time<input id="bAt" type="time"></label>
+    </div>
+    <div class="row end">
+      <button type="button" class="ghost" data-close>Cancel</button>
+      <button type="submit" class="primary">Find time</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="settingsDlg" class="wide-dlg" aria-labelledby="sTitle">
+  <div class="dlg-head"><h2 id="sTitle">Settings</h2><button class="ghost icon" data-close aria-label="Close">✕</button></div>
+
+  <h3>Your day</h3>
+  <div class="grid">
+    <label>Day starts<input id="sStart" type="time"></label>
+    <label>Day ends<input id="sEnd" type="time"></label>
+    <label>Lunch at<input id="sLunch" type="time"></label>
+    <label>Buffer between blobs<select id="sBuffer"><option value="0">None</option><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option></select></label>
+  </div>
+
+  <h3>Clock</h3>
+  <div class="row">
+    <label class="check"><input type="checkbox" id="sReal"> Use the real clock (off = sample day starting 9:20am)</label>
+    <button class="ghost" id="sSpeed" aria-pressed="false">Demo speed: off</button>
+  </div>
+
+  <h3>Calendar</h3>
+  <p class="note">Google sign-in comes next. Until then, paste your Google Calendar's “secret address in iCal format” (works in the Mac app) or import an .ics file. Your events become fixed blobs; Blob never moves them.</p>
+  <div class="row">
+    <input id="icsUrl" class="grow" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" aria-label="Calendar link">
+    <button class="ghost" id="icsUrlGo">Sync link</button>
+    <label class="button ghost" for="icsFile">Import .ics</label>
+    <input id="icsFile" type="file" accept=".ics,text/calendar" class="sr-only">
+  </div>
+  <p class="note" id="calMsg"></p>
+
+  <h3>Sounds</h3>
+  <div class="row">
+    <label>Pack <select id="pack"><option value="blob">Bloop</option><option value="soft">Soft chimes</option><option value="crisp">Crisp beeps</option></select></label>
+    <button class="ghost" data-snd="start">Start</button>
+    <button class="ghost" data-snd="end">Time's up</button>
+    <button class="ghost" data-snd="done">All clear</button>
+  </div>
+  <details class="bites">
+    <summary>Sound bites and catchphrases</summary>
+    <p class="note">Give a moment your own clip and lines. Upload audio or video, trim it, and Blob plays it instead of the built-in sound.</p>
+    <div class="moments" id="moments"></div>
+  </details>
+
+  <h3>Sample data</h3>
+  <div class="row"><button class="ghost danger" id="resetSample">Reset to the sample day</button></div>
+</dialog>
+
 <dialog id="trimDlg" aria-labelledby="trimTitle">
   <h2 id="trimTitle">Sound bite</h2>
   <p class="note" id="trimMsg"></p>
-  <label class="button" for="trimFile">Choose a clip</label>
+  <label class="button ghost" for="trimFile">Choose a clip</label>
   <input id="trimFile" type="file" accept="audio/*,video/*" class="sr-only">
   <div id="trimBody" hidden>
     <canvas id="trimWave" aria-label="Waveform. Drag to choose the part to keep."></canvas>
@@ -153,12 +162,14 @@
       <span class="note" id="trimLen" style="margin:0"></span>
     </div>
   </div>
-  <div class="row" style="justify-content:flex-end;margin-top:16px">
-    <button id="trimCancel" type="button">Cancel</button>
-    <button id="trimPlay" type="button">Play</button>
+  <div class="row end">
+    <button id="trimCancel" type="button" class="ghost">Cancel</button>
+    <button id="trimPlay" type="button" class="ghost">Play</button>
     <button id="trimSave" type="button" class="primary">Save bite</button>
   </div>
 </dialog>
+
+<script src="engine/flow.js"></script>
 <script src="jelly.js"></script>
 <script src="sounds.js"></script>
 <script src="app.js"></script>
