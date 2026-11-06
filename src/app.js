@@ -229,12 +229,6 @@
       const tgt = first.x < tr.left - r.left ? { ...first, x: tr.left - r.left + 4 } : first;
       strand(brain, tgt, t, -1, 1);
     }
-    // The music blob hangs from a strand of its own into the Brain.
-    if (innerWidth > 760) {
-      const m = music.el.getBoundingClientRect();
-      const top = { x: brain.x + 8, y: m.top + m.height / 2 - r.top, s: m.height, c: MUSIC[1] };
-      strand(top, { ...brain, s: brain.s * 0.62, c: MUSIC[0] }, t, 9, music.linked ? 0.85 : 0.3);
-    }
   }
   // A strand is a glowing jelly bridge: thick where it meets each blob, pinched in the middle, and it
   // thins out as it stretches.
@@ -792,14 +786,13 @@
   };
 
   /* ---------- music: the now-playing blob and "What plays when" (plan logic in engine/music.js) ---------- */
-  const MP = window.BlobMusic, MUSIC = ['#6ef3ff', '#8b5cff'];
+  const MP = window.BlobMusic;
   const music = (() => {
     let plan = MP.migrate(store.get('blob.music', null));
     const savePlan = () => store.set('blob.music', plan);
     // np: what Spotify says is playing. ours: BLOB started the music that's on, so the timer may pause it.
     const st = { linked: false, np: null, problem: '', premium: true, ours: false, note: '', noteT: 0, lists: null, liked: null, pick: null, q: '', artists: [] };
-    const npEl = $('#np'), face = $('#npFace');
-    const jelly = new Jelly(npEl, { colors: MUSIC, glow: true, radius: 0.44, points: 56, wobble: 1.5, wide: true, waist: 0.2, lobe: 0.16 });
+    const player = $('#player');   // <spotify-capsule>, from the Codex handoff (spotify-capsule.js)
     let pollT = 0, searchT = 0;
 
     const say = (msg, ms = 6000) => { st.note = msg; clearTimeout(st.noteT); st.noteT = setTimeout(() => { st.note = ''; paint(); }, ms); paint(); };
@@ -832,7 +825,6 @@
         await Links.play(choice ? choice.uri : null);
         if (choice && plan.rules.shuffle) Links.shuffle(true);
         st.ours = true; st.problem = ''; st.premium = true;
-        jelly.jiggle(1);
         setTimeout(refresh, 700);
       } catch (e) { failed(e); }
     }
@@ -863,61 +855,38 @@
         const c = MP.choiceFor(plan, focusBlob());
         return play(c.type === 'list' ? c : st.liked || (await likedSongs()));
       }
-      try { await Links.control(what); st.premium = true; jelly.jiggle(1.2); setTimeout(refresh, 600); } catch (e) { failed(e); }
+      try { await Links.control(what); st.premium = true; setTimeout(refresh, 600); } catch (e) { failed(e); }
     }
     async function likedSongs() { if (!st.liked) st.liked = await Links.likedSongs().catch(() => null); return st.liked; }
 
     /* The now-playing blob */
     function paint() {
       const n = st.np, blob = focusBlob(), next = MP.choiceFor(plan, blob);
-      const eq = on => `<span class="eq${on ? '' : ' stop'}" aria-hidden="true"><i></i><i></i><i></i></span>`;
-      const planBtn = '<button class="round" data-np="plan" aria-label="What plays when" title="What plays when">♪</button>';
-      const art = src => src ? `<img class="art" src="${esc(src)}" alt="">` : '<span class="art" aria-hidden="true"></span>';
-      let html, cls = '';
-      if (!Links || !Links.available) {
-        cls = 'off'; html = `${art()}<div class="info"><span class="kick"><span>Music</span></span><span class="song">Spotify works in the Mac app</span><span class="who">Shows what's playing and follows your blobs</span></div><span></span>${planBtn}`;
-      } else if (!st.linked) {
-        cls = 'off'; html = `${art()}<div class="info"><span class="kick"><span>Spotify</span></span><span class="song">Not connected</span><span class="who">Music can follow your blobs</span></div><span></span><button class="act" data-np="connect">Connect</button>`;
-      } else if (st.problem === 'nodev' && !(n && n.title)) {
-        cls = 'warn'; html = `${art()}<div class="info"><span class="kick"><span>Spotify isn't open</span></span><span class="song">Open Spotify on this Mac</span><span class="who">Then BLOB can play your music</span></div><span></span><button class="act" data-np="retry">Try again</button>`;
-      } else if (n && n.title) {
-        if (!n.playing) cls = 'paused';
-        const ctl = st.premium
-          ? `<div class="ctl"><button data-np="prev" aria-label="Previous song">⏮</button><button class="big" data-np="toggle" aria-label="${n.playing ? 'Pause music' : 'Play music'}">${n.playing ? '❚❚' : '▶'}</button><button data-np="next" aria-label="Next song">⏭</button></div>`
-          : '<span class="msg">Play and skip need Spotify Premium</span>';
-        html = `${art(n.art)}<div class="info"><button class="kick" data-np="swap" title="Change the music">${eq(n.playing)}<span>${esc(st.note || contextName(n.contextUri))} ▾</span></button>
-          <span class="song">${esc(n.title)}</span><span class="who">${esc(n.artist)}${n.duration ? ` · <span data-t></span> / ${mmss(n.duration / 1000)}` : ''}</span>
-          <span class="bar"><i data-bar></i></span></div>${ctl}${planBtn}`;
+      let mode = 'ok';
+      if (!Links || !Links.available) mode = 'web';
+      else if (!st.linked) mode = 'connect';
+      else if (st.problem === 'nodev' && !(n && n.title)) mode = 'retry';
+      else if (!st.premium) mode = 'free';
+      if (n && n.title) {
+        player.track = { title: n.title, artist: n.artist, artworkUrl: n.art, context: contextName(n.contextUri), progress: n.progress, duration: n.duration, at: n.at, device: n.device };
       } else {
+        // Nothing playing yet: say what the next blob will play.
         const what = next.type === 'list' ? next.name : next.type === 'silent' ? 'Silence' : '';
-        html = `${art()}<div class="info"><button class="kick" data-np="swap" title="Change the music">${eq(false)}<span>${esc(st.note || (blob ? catOf(blob.cat).label + ' music' : 'Music'))} ▾</span></button>
-          <span class="song">${esc(what || 'Nothing playing')}</span><span class="who">${what === 'Silence' ? 'Nothing plays for this blob' : what ? 'Plays when you start' : 'Pick music under What plays when'}</span></div>
-          <div class="ctl">${st.premium ? '<button class="big" data-np="toggle" aria-label="Play music">▶</button>' : ''}</div>${planBtn}`;
+        player.track = { title: what || 'Nothing playing', artist: what === 'Silence' ? 'Nothing plays for this blob' : what ? 'Plays when you start' : 'Pick music under What plays when',
+          context: blob ? catOf(blob.cat).label + ' music' : 'Spotify player' };
       }
-      npEl.className = 'np' + (cls ? ' ' + cls : '') + (n && n.playing ? ' playing' : '');
-      // Only rebuild when something changed, so a focused button keeps its focus.
-      if (html !== lastHtml) { face.innerHTML = html; lastHtml = html; }
-      clockTick();
+      player.playing = !!(n && n.playing);
+      player.note = st.note;
+      player.mode = mode;
     }
-    let lastHtml = '';
-    function clockTick() {
-      const n = st.np; if (!n || !n.duration) return;
-      const pos = Math.min(n.duration, n.progress + (n.playing ? Date.now() - n.at : 0));
-      const t = face.querySelector('[data-t]'), bar = face.querySelector('[data-bar]');
-      if (t) t.textContent = mmss(pos / 1000);
-      if (bar) bar.style.width = (pos / n.duration * 100).toFixed(1) + '%';
-    }
-    npEl.addEventListener('click', e => {
-      const b = e.target.closest('[data-np]'); if (!b) { jelly.jiggle(0.4); return; }
-      const a = b.dataset.np;
+    player.addEventListener('playback-action', e => {
+      const a = e.detail.action;
       if (a === 'plan') return openPlan();
       if (a === 'swap') { const blob = focusBlob(); return openPlan(blob && plan.blobs[blob.id] ? 'blob' : blob ? blob.cat : null); }
       if (a === 'connect') { fillSettings(); $('#settingsDlg').showModal(); return; }
       if (a === 'retry') { st.problem = ''; const c = MP.choiceFor(plan, focusBlob()); return timer && timer.running && c.type === 'list' ? play(c) : refresh(); }
-      control(a);
+      control(a === 'play' || a === 'pause' ? 'toggle' : a === 'previous' ? 'prev' : a);
     });
-    // Keep the song clock moving between checks.
-    setInterval(() => { if (st.np && st.np.playing && !document.hidden) clockTick(); }, 1000);
 
     /* "What plays when" */
     async function loadLists() {
@@ -941,7 +910,7 @@
         <button class="pick" data-pick="${key}" aria-expanded="${st.pick === key}"><b>${esc(MP.label(choice))}</b><span>${st.pick === key ? '▲' : '▼'}</span></button>
         ${st.pick === key ? `<div class="mp-picker"><input id="mpQ" placeholder="Search your playlists, or type an artist for their radio" aria-label="Search playlists or artists" value="${esc(st.q)}"><div id="mpRes">${results()}</div></div>` : ''}</div>`;
       const sw = (k, txt, sub) => `<div class="mp-rule"><span>${txt}${sub ? `<small>${sub}</small>` : ''}</span><button class="sw" role="switch" aria-checked="${!!plan.rules[k]}" data-rule="${k}" aria-label="${esc(txt)}"></button></div>`;
-      openCard(`<div class="mp"><div class="head"><div><span class="kicker"><i style="--a:${MUSIC[0]};--b:${MUSIC[1]}"></i>Music</span><h3>What plays when</h3></div>${xBtn}</div>
+      openCard(`<div class="mp"><div class="head"><div><span class="kicker">Music</span><h3>What plays when</h3></div>${xBtn}</div>
         ${st.linked ? '' : '<p class="meta">Connect Spotify in Settings to use these.</p>'}
         <h4>For each kind of blob</h4>
         <div class="mp-rows">${Object.entries(CATS).map(([k, c]) => row(k, c.label, c.c, plan.kinds[k] || MP.KEEP, blob && blob.cat === k ? ' cur' : '')).join('')}</div>
@@ -994,7 +963,7 @@
           const now = MP.choiceFor(plan, blob);
           if (now.type === 'list') play(now); else if (now.type === 'silent' && st.np && st.np.playing) pause();
         }
-        st.pick = null; renderPlan(); paint(); jelly.jiggle(0.8);
+        st.pick = null; renderPlan(); paint();
       });
     }
 
@@ -1006,7 +975,7 @@
     document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
     hooks.brain = paint;
     paint();
-    return { forBlob, timerEvent, setLinked, openPlan, paint, el: npEl, get linked() { return st.linked; } };
+    return { forBlob, timerEvent, setLinked, openPlan, paint, get linked() { return st.linked; } };
   })();
   let calTimer = 0;
   async function refreshConnections(announce = false) {

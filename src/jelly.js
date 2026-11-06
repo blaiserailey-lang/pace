@@ -19,17 +19,14 @@
   const rgba = (h, a) => `rgba(${hex(h).join(',')},${a})`;
 
   class Jelly {
-    /* host: element the canvas fills. opts: {colors:[c1,c2?], wobble, seed, points, glow, radius, wide, waist, lobe}
+    /* host: element the canvas fills. opts: {colors:[c1,c2?], wobble, seed, points, glow, radius}
        glow: neon look for dark backgrounds (outer glow + floor light); the canvas then overhangs the
-       host so the glow isn't clipped. radius: body radius as a share of the host's smaller side.
-       wide: stretch the body to fill a wide host (a long, soft jelly rather than a circle); waist pinches
-       its middle and lobe makes one end fatter than the other (negative: the right end). */
+       host so the glow isn't clipped. radius: body radius as a share of the host's smaller side. */
     constructor(host, opts = {}) {
       this.host = host;
       this.canvas = document.createElement('canvas');
       this.canvas.className = opts.glow ? 'jelly glow' : 'jelly';
       this.glow = !!opts.glow; this.radius = opts.radius || 0.43;
-      this.wide = !!opts.wide; this.waist = opts.waist || 0; this.lobe = opts.lobe || 0; this.ax = 1;
       this.canvas.setAttribute('aria-hidden', 'true');
       host.prepend(this.canvas);
       this.g = this.canvas.getContext('2d');
@@ -56,7 +53,6 @@
       this.canvas.width = Math.max(1, this.w * dpr); this.canvas.height = Math.max(1, this.h * dpr);
       this.g.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.R = Math.min(hw, hh) * this.radius;
-      this.ax = this.wide ? Math.max(1, hw * 0.45 / Math.max(1, this.R)) : 1;   // horizontal stretch
     }
     setColors(colors) {
       const c = colors.length > 1 ? colors : [colors[0], colors[0]];
@@ -125,14 +121,7 @@
       const sx = 1 + this.sq * 0.5, sy = 1 - this.sq;
       for (let i = 0; i < n; i++) {
         const a = i / n * Math.PI * 2, r = this.R + this.d[i];
-        let ux = Math.cos(a), uy = Math.sin(a);
-        if (this.wide) {
-          // squarer ends and a soft pinch in the middle, so it reads as a jelly bean, not a lens
-          const c = ux, s = uy;
-          ux = Math.sign(c) * Math.pow(Math.abs(c), 0.72) * this.ax;
-          uy = Math.sign(s) * Math.pow(Math.abs(s), 0.9) * (1 - this.waist * Math.exp(-c * c * 10)) * (1 - this.lobe * c);
-        }
-        pts.push([ox + ux * r * sx, oy + uy * r * sy]);
+        pts.push([ox + Math.cos(a) * r * sx, oy + Math.sin(a) * r * sy]);
       }
       const p = new Path2D();
       const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
@@ -148,7 +137,7 @@
       if (this.glow) {
         // light pooling on the floor, then a neon halo behind the body
         g.save(); g.globalAlpha = 0.45 * (this.dim ?? 1); g.fillStyle = c2; g.filter = `blur(${Math.max(4, R * 0.18)}px)`;
-        g.beginPath(); g.ellipse(this.w / 2 + this.cx * 0.5, oy + R * 1.08, R * 0.8 * this.ax, R * 0.13, 0, 0, Math.PI * 2); g.fill(); g.restore();
+        g.beginPath(); g.ellipse(this.w / 2 + this.cx * 0.5, oy + R * 1.08, R * 0.8, R * 0.13, 0, 0, Math.PI * 2); g.fill(); g.restore();
         g.save(); g.globalAlpha = 0.55 * (this.dim ?? 1); g.shadowColor = c1; g.shadowBlur = R * 0.55; g.fillStyle = c2; g.fill(p); g.restore();
       } else {
         // contact shadow
@@ -157,10 +146,10 @@
       }
       // body: the two colours run diagonally, lit from the top-left
       g.save(); g.clip(p);
-      const lin = g.createLinearGradient(ox - R * this.ax, oy - R, ox + R * this.ax, oy + R);
+      const lin = g.createLinearGradient(ox - R, oy - R, ox + R, oy + R);
       lin.addColorStop(0, c1); lin.addColorStop(1, c2);
       g.fillStyle = lin; g.fill(p);
-      const shade = g.createRadialGradient(ox - R * 0.3 * this.ax, oy - R * 0.35, R * 0.1, ox, oy, R * 1.25 * (this.wide ? this.ax * 0.75 : 1));
+      const shade = g.createRadialGradient(ox - R * 0.3, oy - R * 0.35, R * 0.1, ox, oy, R * 1.25);
       shade.addColorStop(0, 'rgba(255,255,255,.38)'); shade.addColorStop(0.45, 'rgba(255,255,255,0)'); shade.addColorStop(1, 'rgba(0,10,40,.32)');
       g.fillStyle = shade; g.fill(p);
       // see-through depth: a lighter core and a few suspended bubbles
@@ -171,7 +160,7 @@
       g.fillStyle = 'rgba(255,255,255,.28)';
       for (let i = 0; i < 4; i++) {
         const a = this.seed + i * 1.9, rr = R * (0.68 + 0.14 * ((i * 37 + this.seed) % 1));
-        const bx = ox + Math.cos(a) * rr * this.ax, by = oy + Math.sin(a) * rr + Math.sin(t * 0.8 + i) * R * 0.02;
+        const bx = ox + Math.cos(a) * rr, by = oy + Math.sin(a) * rr + Math.sin(t * 0.8 + i) * R * 0.02;
         g.beginPath(); g.arc(bx, by, R * (0.025 + i * 0.008), 0, Math.PI * 2); g.fill();
       }
       g.restore();
@@ -179,7 +168,7 @@
       g.save(); g.lineWidth = Math.max(1.5, R * 0.03); g.strokeStyle = 'rgba(255,255,255,.45)'; g.stroke(p); g.restore();
       g.save(); g.clip(p);
       g.fillStyle = 'rgba(255,255,255,.75)'; g.filter = `blur(${Math.max(1, R * 0.03)}px)`;
-      g.beginPath(); g.ellipse(ox - R * (this.wide ? this.ax * 0.62 : 0.38) + this.cx * 0.2, oy - R * 0.5, R * 0.26 * (this.wide ? 1.6 : 1), R * 0.11, this.wide ? -0.25 : -0.55, 0, Math.PI * 2); g.fill();
+      g.beginPath(); g.ellipse(ox - R * 0.38 + this.cx * 0.2, oy - R * 0.5, R * 0.26, R * 0.11, -0.55, 0, Math.PI * 2); g.fill();
       g.beginPath(); g.arc(ox - R * 0.08, oy - R * 0.66, R * 0.045, 0, Math.PI * 2); g.fill();
       g.restore();
     }

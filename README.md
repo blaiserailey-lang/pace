@@ -54,7 +54,7 @@ Any calendar with an iCal link (Google's secret address, Outlook, iCloud, a shar
 2. Under **User management**, add your Spotify account's email.
 3. In BLOB, open Settings → Spotify, paste the client ID and press **Connect**. If you connected before this version, disconnect and connect again so BLOB can see what's playing.
 
-The music blob at the top of the stage shows what's playing on your Spotify (any device) with play/pause, previous and next. Its ♪ button opens **What plays when**:
+The Spotify player in the bottom-right corner of the stage shows what's playing on your Spotify (any device). Open it with the arrow for the album art, progress, previous and next. Its **What plays when** button (or the playlist name at the top of the open player) sets the music:
 
 - **For each kind of blob**: one of your playlists, Liked Songs, an artist's radio (type the artist's name in the search box), "Keep what's playing", or "Silence". Meetings start as Silence.
 - **Just this blob**: give one blob its own music.

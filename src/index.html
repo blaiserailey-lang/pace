@@ -31,7 +31,6 @@
 
   <main class="stage" id="stage">
     <canvas class="strands" id="strands" aria-hidden="true"></canvas>
-    <section class="np off" id="np" aria-label="Music"><div class="np-face" id="npFace"></div></section>
     <section class="brain-wrap" aria-label="Brain: current timer">
       <div class="brain" id="brain">
         <svg class="gauge" id="gauge" viewBox="0 0 200 200" aria-hidden="true"></svg>
@@ -50,6 +49,7 @@
     <div class="track" id="track" tabindex="0" aria-label="Your day as a string of blobs. Scroll sideways to pan.">
       <div class="lane" id="lane" role="list"></div>
     </div>
+    <spotify-capsule id="player" class="player"></spotify-capsule>
   </main>
 
   <section class="card" id="card" hidden aria-live="polite"></section>
@@ -154,7 +154,7 @@
 
   <h3>Spotify</h3>
   <div id="spBox" class="conn">
-    <p class="note">Shows what's playing at the top of BLOB, and plays the music you pick for each kind of blob when its timer starts. Seeing what's playing works on any account; playing, pausing and skipping need Spotify Premium. Uses your own Spotify app's client ID (README).</p>
+    <p class="note">Shows what's playing in the player at the bottom right of BLOB, and plays the music you pick for each kind of blob when its timer starts. Seeing what's playing works on any account; playing, pausing and skipping need Spotify Premium. Uses your own Spotify app's client ID (README).</p>
     <div class="row">
       <input id="spId" class="grow" placeholder="Spotify client ID" autocomplete="off" spellcheck="false" aria-label="Spotify client ID">
       <button class="primary" id="spConnect">Connect Spotify</button>
@@ -211,6 +211,7 @@
 <script src="jelly.js"></script>
 <script src="sounds.js"></script>
 <script src="integrations.js"></script>
+<script src="spotify-capsule.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
