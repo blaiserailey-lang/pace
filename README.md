@@ -30,7 +30,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ## Roadmap
 
 - Spotify playback that switches between Work, Chill and Hype mixes
-- Custom sound uploads per character
+- Sound bites & catchphrases per moment (done in-app; clips stay on your device)
 - Optional AI image-to-3D "HD" character
 - Launch at login and a start-of-day reminder
 - Signed and notarized builds

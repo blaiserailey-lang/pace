@@ -47,6 +47,7 @@
         <button class="primary" id="go">Start day</button>
         <button id="skip">Skip block</button>
         <button id="plus">+5 min</button>
+        <button id="checkin">Check in</button>
         <button id="speed" aria-pressed="false">Demo speed: off</button>
       </div>
       <p class="note" style="text-align:center">Demo speed runs the clock 60× faster so you can watch transitions, sounds, and music switches.</p>
@@ -92,7 +93,7 @@
         <button data-snd="end">Time's up</button>
         <button data-snd="done">Day complete</button>
       </div>
-      <p class="note">Each personality has its own sounds. Custom sound uploads and Spotify playback are coming next.</p>
+      <p class="note">Each personality has its own sounds. Add your own clips under Sound bites below. Spotify playback is coming next.</p>
     </section>
   </div>
 
@@ -137,8 +138,35 @@
     </div>
     <p class="note">"Match the block" makes your character change color with focus, breaks, meals and hype. Its face still changes mood either way.</p>
   </section>
+
+  <section class="panel" aria-labelledby="soundTitle">
+    <h2 id="soundTitle">Sound bites &amp; catchphrases</h2>
+    <p class="note">Give each moment your own clip and lines. Upload any audio or video clip, trim it to the bite, and Pace plays it instead of the built-in sound. Several lines per moment get picked at random.</p>
+    <div class="moments" id="moments"></div>
+  </section>
+
 </div>
 <script src="character.js"></script>
+<script src="sounds.js"></script>
+<dialog id="trimDlg" aria-labelledby="trimTitle">
+  <h2 id="trimTitle">Sound bite</h2>
+  <p class="note" id="trimMsg"></p>
+  <label class="button" for="trimFile">Choose a clip</label>
+  <input id="trimFile" type="file" accept="audio/*,video/*" class="sr-only">
+  <div id="trimBody" hidden>
+    <canvas id="trimWave" aria-label="Waveform. Drag to choose the part to keep."></canvas>
+    <div class="row trim-row">
+      <label>Start (s)<input id="trimStart" type="number" step="0.05" min="0"></label>
+      <label>End (s)<input id="trimEnd" type="number" step="0.05" min="0"></label>
+      <span class="note" id="trimLen" style="margin:0"></span>
+    </div>
+  </div>
+  <div class="row" style="justify-content:flex-end;margin-top:16px">
+    <button id="trimCancel" type="button">Cancel</button>
+    <button id="trimPlay" type="button">Play</button>
+    <button id="trimSave" type="button" class="primary">Save bite</button>
+  </div>
+</dialog>
 <script src="app.js"></script>
 <script type="module" src="char3d.js"></script>
 </body>

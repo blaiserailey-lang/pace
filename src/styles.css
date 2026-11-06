@@ -104,3 +104,18 @@ label.button:hover{border-color:var(--muted)}
 #cPhoto:focus-visible + * , label.button:focus-within{outline:3px solid var(--mode, var(--work));outline-offset:2px}
 .editor.photo .drawn-only{opacity:.4;pointer-events:none}
 .preview img{width:100%;height:100%;object-fit:contain}
+/* Sound bites */
+.moments{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;margin-top:12px}
+.moment{border:1px solid var(--line);border-radius:14px;padding:12px;display:grid;gap:8px;background:var(--panel)}
+.moment-head small{display:block;color:var(--muted);font-size:12.5px}
+.moment textarea{font:inherit;font-size:14px;color:var(--ink);background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:7px 9px;resize:vertical;min-height:52px}
+.moment-clip{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.clip-state{font-size:12.5px;color:var(--muted);flex:1 1 100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+button.small{padding:5px 12px;font-size:13px}
+dialog{border:1px solid var(--line);border-radius:18px;background:var(--panel);color:var(--ink);padding:20px;width:min(560px,calc(100vw - 32px))}
+dialog::backdrop{background:rgba(10,12,25,.45)}
+#trimWave{display:block;width:100%;height:96px;border-radius:10px;margin-top:14px;cursor:crosshair;touch-action:none}
+.trim-row{margin-top:10px}
+.trim-row label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+.trim-row input{width:96px;background:var(--chip);border:1px solid var(--line);border-radius:8px;padding:6px 8px;color:var(--ink)}
+button:disabled{opacity:.5;cursor:not-allowed}

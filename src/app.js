@@ -11,7 +11,7 @@ function syncDesktop(){
     remainingS: Math.max(0, remaining) / speed,
     label: b ? TYPE_LABEL[b.type] : '',
     nextTitle: nx ? (nx.type==='focus' ? `Focus: ${nx.name}` : TYPE_LABEL[nx.type]) : 'Day complete',
-    nextBody: nx ? LINES[pers][nx.type](nx.name) : LINES[pers].done(),
+    nextBody: nx ? lineFor(nx.type, nx.name) : lineFor('done'),
   }).catch(()=>{});
 }
 const MODE_COLOR = {focus:'--work', snack:'--snack', meal:'--meal', chill:'--chill', hype:'--hype'};
@@ -112,7 +112,22 @@ function setMode(type){
   if (char3d) char3d.setMode(type);
   $('#musicMode').textContent = 'Spotify: ' + MUSIC[type];
 }
-function say(key, p){ const pers = $('#personality').value; $('#say').textContent = LINES[pers][key](p); }
+const MOMENT_OF = {focus:'start', snack:'break', meal:'break', chill:'break', hype:'hype', warn:'warn', done:'done'};
+/* Your catchphrase for this moment if you wrote one, otherwise the personality's line. */
+function lineFor(key, p){ const pers = $('#personality').value; return customLine(MOMENT_OF[key] || key, p) || LINES[pers][key](p); }
+function say(key, p){ $('#say').textContent = lineFor(key, p); }
+/* Play your clip for a moment, or the built-in sound. Resolves to how long it plays (s). */
+async function cue(moment, synth){ const d = await playBite(moment).catch(()=>0); if (!d && synth) sfx(synth); return d || 0.6; }
+function checkIn(){
+  const b = plan[idx]; if (!b) return;
+  const doneFocus = plan.slice(0, idx).filter(x=>x.type==='focus');
+  const leftMin = plan.slice(idx+1).filter(x=>x.type==='focus').reduce((s,x)=>s+x.dur,0) + (b.type==='focus' ? Math.ceil(remaining/60) : 0);
+  const mins = Math.max(0, Math.ceil(remaining/60));
+  const status = `${mins} min left on ${b.type==='focus' ? b.name : TYPE_LABEL[b.type].toLowerCase()}. ${doneFocus.length} focus block${doneFocus.length===1?'':'s'} done, ${(leftMin/60).toFixed(1)} h to go.`;
+  const own = customLine('update', b.name);
+  $('#say').textContent = own ? `${own} ${status}` : status;
+  cue('update', 'tick');
+}
 
 function renderClock(){
   const b = plan[idx];
@@ -127,11 +142,15 @@ function renderClock(){
   $('#next').textContent = nx ? `Up next at ${fmtClock(b.start + b.dur)}: ${nx.type==='focus' ? nx.name : TYPE_LABEL[nx.type]}` : 'Last block of the day';
 }
 
-function enter(i){
+function enter(i, afterEnd = 0){
   idx = i; warned = {};
-  if (idx >= plan.length){ running = false; started = false; sfx('done'); say('done'); $('#go').textContent='Start day'; idx = plan.length-1; remaining = 0; renderSheet(); renderClock(); syncDesktop(); return; }
+  if (idx >= plan.length){ running = false; started = false; setTimeout(()=>cue('done','done'), afterEnd*1000); say('done'); $('#go').textContent='Start day'; idx = plan.length-1; remaining = 0; renderSheet(); renderClock(); syncDesktop(); return; }
   const b = plan[idx]; remaining = b.dur*60;
-  say(b.type, b.name); renderSheet(); renderClock(); syncDesktop();
+  const endLine = afterEnd ? customLine('end', plan[idx-1] && plan[idx-1].name) : null;
+  if (endLine) { $('#say').textContent = endLine; setTimeout(()=>{ if (plan[idx]===b) say(b.type, b.name); }, Math.max(2500, afterEnd*1000)); }
+  else say(b.type, b.name);
+  renderSheet(); renderClock(); syncDesktop();
+  setTimeout(()=>cue(MOMENT_OF[b.type], 'start'), afterEnd*1000);
   if (char3d) char3d.hop();
 }
 
@@ -144,12 +163,14 @@ function tick(){
     let guard = 0;
     while (running && remaining <= 0 && guard++ < 50){
       const over = -remaining;
-      sfx('end'); setTimeout(()=>sfx('start'), 700); enter(idx+1);
+      if (guard === 1) cue('end', 'end');   // only the first if several blocks ended while away
+      enter(idx+1, guard === 1 ? Math.max(0.7, endBiteLen()) : 0);
       if (running) remaining -= over;   // carry time that passed while hidden
     }
     const b = plan[idx];
     if (running && b && b.dur > 6){
-      if (remaining <= 300 && !warned.five){ warned.five = true; sfx('warn'); say('warn'); }
+      if (remaining <= 300 && !warned.five){ warned.five = true; cue('warn','warn'); say('warn'); }
+      if (b.type==='focus' && b.dur >= 30 && remaining <= b.dur*30 && !warned.half){ warned.half = true; checkIn(); }
       if (remaining <= 60 && !warned.one){ warned.one = true; sfx('tick'); }
     }
     renderClock();
@@ -201,13 +222,17 @@ const saveSettings = () => { try { localStorage.setItem('pace.settings', JSON.st
 $('#personality').onchange = ()=>{ saveSettings(); const b = plan[idx]; if (b) say(b.type, b.name); sfx('start'); };
 $('#go').onclick = ()=>{
   if (!plan.length) return;
-  if (!started){ plan = buildPlan(); if (!plan.length) return; started = true; running = true; lastTick = Date.now(); sfx('start'); enter(0); $('#go').textContent='Pause'; return; }
+  if (!started){ plan = buildPlan(); if (!plan.length) return; started = true; running = true; lastTick = Date.now(); enter(0); $('#go').textContent='Pause'; return; }
   running = !running; lastTick = Date.now(); $('#go').textContent = running ? 'Pause' : 'Resume'; syncDesktop();
 };
-$('#skip').onclick = ()=>{ if (!started) return; sfx('end'); enter(idx+1); };
+$('#skip').onclick = ()=>{ if (!started) return; cue('end','end'); enter(idx+1, Math.max(0.7, endBiteLen())); };
+$('#checkin').onclick = checkIn;
 $('#plus').onclick = ()=>{ if (!plan[idx]) return; remaining += 300; plan[idx].dur += 5; reflow(); renderSheet(); renderClock(); syncDesktop(); };
 $('#speed').onclick = e=>{ speed = speed===1 ? 60 : 1; e.target.textContent = `Demo speed: ${speed===1?'off':'60×'}`; e.target.setAttribute('aria-pressed', speed!==1); syncDesktop(); };
 document.querySelectorAll('[data-snd]').forEach(b=>b.onclick=()=>sfx(b.dataset.snd));
+setupSounds((what, m) => { if (what==='play') cue(m, {start:'start',warn:'warn',end:'end',break:'start',hype:'start',update:'tick',done:'done'}[m]); });
+/* The next block's sound waits for your time's-up clip to finish. */
+const endBiteLen = () => clipLens.end || 0;
 
 /* Eyes follow the pointer a little */
 document.addEventListener('pointermove', e=>{
