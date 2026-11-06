@@ -19,7 +19,8 @@
   const rgba = (h, a) => `rgba(${hex(h).join(',')},${a})`;
 
   class Jelly {
-    /* host: element the canvas fills. opts: {colors:[c1,c2?], wobble, seed, points, glow, radius}
+    /* host: element the canvas fills. opts: {colors:[c1,c2?], rim, wobble, seed, points, glow, radius}
+       rim: an optional colour for a band around the edge (where a blob came from, e.g. its calendar).
        glow: neon look for dark backgrounds (outer glow + floor light); the canvas then overhangs the
        host so the glow isn't clipped. radius: body radius as a share of the host's smaller side. */
     constructor(host, opts = {}) {
@@ -38,6 +39,7 @@
       this.idle = opts.wobble ?? 1;
       this.colors = opts.colors || ['#8ad62f'];
       this.color = this.colors.slice(); this.target = this.colors.slice(); this.colorT = 1;
+      this.rim = opts.rim || null;
       this.pointer = null;
       this.resize();
       new ResizeObserver(() => this.resize()).observe(host);
@@ -54,6 +56,7 @@
       this.g.setTransform(dpr, 0, 0, dpr, 0, 0);
       this.R = Math.min(hw, hh) * this.radius;
     }
+    setRim(c) { if (c !== this.rim) { this.rim = c || null; this.jiggle(0.3); } }
     setColors(colors) {
       const c = colors.length > 1 ? colors : [colors[0], colors[0]];
       this.color = this.current(); this.target = c.slice(); this.colorT = 0;
@@ -164,6 +167,11 @@
         g.beginPath(); g.arc(bx, by, R * (0.025 + i * 0.008), 0, Math.PI * 2); g.fill();
       }
       g.restore();
+      // calendar band: a coloured rim around the body, glowing a little
+      if (this.rim) {
+        g.save(); g.globalAlpha = this.dim ?? 1; g.lineWidth = Math.max(3, R * 0.1); g.strokeStyle = this.rim;
+        g.shadowColor = this.rim; g.shadowBlur = R * 0.25; g.stroke(p); g.restore();
+      }
       // glossy rim + specular highlight
       g.save(); g.lineWidth = Math.max(1.5, R * 0.03); g.strokeStyle = 'rgba(255,255,255,.45)'; g.stroke(p); g.restore();
       g.save(); g.clip(p);
