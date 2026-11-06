@@ -122,7 +122,7 @@ fn start_ticker(app: AppHandle, state: Shared) {
             if text != last_text {
                 if let Some(tray) = app.tray_by_id(TRAY_ID) {
                     let _ = tray.set_title(if text.is_empty() { None } else { Some(text.as_str()) });
-                    let _ = tray.set_tooltip(Some(if text.is_empty() { "Blobs" } else { text.as_str() }));
+                    let _ = tray.set_tooltip(Some(if text.is_empty() { "BLOB" } else { text.as_str() }));
                 }
                 last_text = text;
             }
@@ -143,12 +143,12 @@ pub fn run() {
         .manage(state.clone())
         .invoke_handler(tauri::generate_handler![sync_timer, fetch_text])
         .setup(move |app| {
-            let show = MenuItem::with_id(app, "show", "Show Blobs", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Blobs", true, Some("CmdOrCtrl+Q"))?;
+            let show = MenuItem::with_id(app, "show", "Show BLOB", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit BLOB", true, Some("CmdOrCtrl+Q"))?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
 
             let mut tray = TrayIconBuilder::with_id(TRAY_ID)
-                .tooltip("Blobs")
+                .tooltip("BLOB")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -187,7 +187,7 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building Blobs");
+        .expect("error while building BLOB");
 
     app.run(|app, event| {
         #[cfg(target_os = "macos")]

@@ -152,3 +152,19 @@ test('no estimate or percent fields exist anywhere in state or proposals', () =>
   const text = JSON.stringify([s, p, E.deadlineStatus(s, 'd', NOW)]);
   assert.doesNotMatch(text, /estimat|percent|progress|hoursLeft|remaining/i);
 });
+
+test('engine-chosen times skip weekends', () => {
+  const fri = t(4, '08:30');
+  const s = E.createState({});
+  const p = E.proposeDeadline(s, { id: 'w', title: 'Weekend test', due: t(7, '17:00'), sessions: 2 }, fri);
+  const days = p.changes.filter(c => c.op === 'add').map(c => new Date(c.item.start).getDay());
+  assert.deepEqual(days, [5, 1]); // Friday and Monday, not Saturday or Sunday
+});
+
+test('asking for a taken time offers the closest free time, earlier or later', () => {
+  let s = base();
+  s = E.apply(s, E.proposeAdd(s, { id: 'w', title: 'Write', dur: 20, start: t(0, '15:30') }, NOW));
+  // 13:45 for 20 min runs into the 14:00 call's buffer; 13:30 is the closest start that still ends before it.
+  const p = E.proposeMove(s, 'w', { start: t(0, '13:45') }, NOW);
+  assert.equal(p.changes[0].to, t(0, '13:30'));
+});

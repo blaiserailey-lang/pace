@@ -1,502 +1,777 @@
-/* Blobs: your day as a stack of jelly blobs. The big blob is what you're doing now (task + timer);
-   tap it to open today's blobs, where you can add, edit, drag to rearrange, or shuffle. */
-const $ = s => document.querySelector(s);
-const $$ = s => [...document.querySelectorAll(s)];
-const store = {
-  get(k, d) { try { const v = JSON.parse(localStorage.getItem(k)); return v ?? d; } catch (e) { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
-};
-const uid = () => Math.random().toString(36).slice(2, 9);
-const todayKey = () => { const d = new Date(); return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`; };
-const toMin = t => { const [h, m] = (t || '0:0').split(':').map(Number); return h * 60 + m; };
-const fmtClock = m => { m = Math.round(m); let h = Math.floor(m / 60) % 24; const mm = String(m % 60).padStart(2, '0'); const ap = h >= 12 ? 'p' : 'a'; h = ((h + 11) % 12) + 1; return `${h}:${mm}${ap}`; };
-const nowMin = () => { const d = new Date(); return d.getHours() * 60 + d.getMinutes() + d.getSeconds() / 60; };
-const ceil5 = m => Math.ceil(m / 5) * 5;
-const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
-
-/* ---------- Colour system ----------
-   Work = cool hues, Personal = warm hues, Breaks = greens (the classic jelly colour).
-   Once a category runs out of single colours, projects get two-colour gradients. */
-const PALETTE = {
-  work: [['#3d6bff'], ['#7a5cff'], ['#00a6c7'], ['#2f8dff'], ['#a35cff'], ['#14b3a3'],
-         ['#3d6bff', '#00a6c7'], ['#7a5cff', '#2f8dff'], ['#a35cff', '#3d6bff'], ['#14b3a3', '#2f8dff'], ['#00a6c7', '#7a5cff'], ['#2f8dff', '#14b3a3']],
-  personal: [['#ff6b5a'], ['#ff5fa2'], ['#ff9440'], ['#ff5fa2', '#ff9440'], ['#ff6b5a', '#ff5fa2'], ['#ff9440', '#ffc53d']],
-};
-const FIXED = {
-  snack: ['#8ad62f'], chill: ['#2fd49a'], meal: ['#8ad62f', '#ffc53d'],
-  meeting: ['#5562d6', '#7d86a8'], personalEvent: ['#ff8a7a', '#ffb199'], done: ['#8ad62f', '#2fd49a'],
-};
-const CAT_LABEL = { work: 'Work', personal: 'Personal', break: 'Break' };
-
-let projects = store.get('pace.projects', null) || [
-  { name: 'EP mix revisions', due: isoIn(4), hours: 10, cat: 'work' },
-  { name: 'Artist pitch deck', due: isoIn(9), hours: 8, cat: 'work' },
-  { name: 'Music video treatment', due: isoIn(14), hours: 6, cat: 'work' },
-  { name: 'Guitar practice', due: isoIn(30), hours: 6, cat: 'personal' },
-];
-projects.forEach(p => { p.id = p.id || uid(); p.cat = p.cat || 'work'; p.name = String(p.name || '').replace(/^Example:\s*/, ''); });
-function isoIn(d) { const x = new Date(); x.setDate(x.getDate() + d); return x.toISOString().slice(0, 10); }
-const saveProjects = () => store.set('pace.projects', projects);
-
-function projectColors(p) {
-  const same = projects.filter(q => q.cat === p.cat), i = Math.max(0, same.indexOf(p)), pal = PALETTE[p.cat] || PALETTE.work;
-  return p.color != null && pal[p.color] ? pal[p.color] : pal[i % pal.length];
-}
-function colorsFor(it) {
-  if (!it) return FIXED.done;
-  if (it.kind === 'focus') { const p = projects.find(q => q.id === it.proj); return p ? projectColors(p) : PALETTE[it.cat || 'work'][0]; }
-  if (it.kind === 'event') return it.cat === 'personal' ? FIXED.personalEvent : FIXED.meeting;
-  if (it.kind === 'task') return it.cat === 'personal' ? PALETTE.personal[0] : it.cat === 'break' ? FIXED.snack : PALETTE.work[0];
-  return FIXED[it.kind] || FIXED.snack;
-}
-const catOf = it => it.kind === 'focus' || it.kind === 'event' || it.kind === 'task' ? (it.cat || 'work') : 'break';
-const KIND_LABEL = { focus: 'Focus', event: 'Calendar', task: 'Task', snack: 'Snack break', chill: 'Chill break', meal: 'Meal break' };
-
-/* ---------- Settings ---------- */
-const SETTINGS = ['dayStart', 'dayEnd', 'focus', 'snack', 'meal', 'pack'];
-const st = store.get('pace.settings', {});
-SETTINGS.forEach(k => { if (st[k] != null && $('#' + k)) $('#' + k).value = st[k]; });
-const saveSettings = () => store.set('pace.settings', Object.fromEntries(SETTINGS.map(k => [k, $('#' + k).value])));
-
-/* ---------- Calendar events (today) ---------- */
-let events = (() => { const e = store.get('blobs.events', null); return e && e.date === todayKey() ? e.list : []; })();
-const saveEvents = () => store.set('blobs.events', { date: todayKey(), list: events });
-
-/* ---------- Building the day ----------
-   Calendar events keep their real times; the gaps fill with focus blocks (rotating projects by
-   how far behind each one is: hours left ÷ days left) and breaks. Leftover minutes stretch the
-   block before them so the day stays continuous. */
-function dayStartFromNow() {
-  const s = toMin($('#dayStart').value || '10:00'), e = toMin($('#dayEnd').value || '18:00'), n = ceil5(nowMin());
-  return n > s && n < e - 15 ? n : s;
-}
-function buildDay(startAt) {
-  const start = startAt ?? dayStartFromNow(), end = toMin($('#dayEnd').value || '18:00');
-  const focus = Math.max(15, +$('#focus').value || 50), snack = Math.max(5, +$('#snack').value || 10), meal = toMin($('#meal').value || '13:00');
-  const midnight = new Date(); midnight.setHours(0, 0, 0, 0);
-  const need = projects.filter(p => p.name && p.hours > 0).map(p => {
-    const days = Math.max(1, Math.ceil((new Date(p.due + 'T23:59') - midnight) / 864e5));
-    return { p, target: p.hours * 60 / days, got: 0, days };
-  });
-  const fixed = events.filter(e => e.end > start && e.start < end).map(e => ({ ...e, start: Math.max(e.start, start) })).sort((a, b) => a.start - b.start);
-  if (meal + 60 > start && meal < end && !fixed.some(e => e.start < meal + 60 && e.end > meal))
-    fixed.push({ meal: true, start: Math.max(meal, start), end: meal + 60 }), fixed.sort((a, b) => a.start - b.start);
-
-  const items = []; let t = start, focusN = 0, last = null;
-  const push = (o) => { const it = { id: uid(), start: t, ...o }; items.push(it); t += it.dur; return it; };
-  const fill = (until) => {
-    while (until - t >= 15 && need.length) {
-      const pool = need.length > 1 ? need.filter(n => n !== last) : need;
-      pool.sort((a, b) => (b.target - b.got) - (a.target - a.got) || a.days - b.days);
-      const n = pool[0], dur = Math.min(focus, until - t);
-      push({ kind: 'focus', name: n.p.name, dur, proj: n.p.id, cat: n.p.cat, note: n.days <= 3 ? `Due in ${n.days} day${n.days > 1 ? 's' : ''}` : '' });
-      n.got += dur; last = n; focusN++;
-      if (until - t < 20) break;
-      if (focusN % 3 === 0) push({ kind: 'chill', name: 'Chill break', dur: 15, note: 'Stretch, walk, reset' });
-      else push({ kind: 'snack', name: 'Snack break', dur: snack, note: 'Snack + water' });
-    }
-    if (until > t && items.length) { items[items.length - 1].dur += until - t; t = until; }   // stretch the last block over a small gap
-    else if (until > t) t = until;
+/* BLOB desktop UI: the Brain (timer) on the left and the Living Flow, a string of jelly blobs, to the right.
+   All planning goes through BlobEngine (engine/flow.js). The UI only asks for proposals, shows them, and
+   applies them when you press Approve. The helper in the ask bar is a set of plain rules, not AI. */
+(function () {
+  const E = window.BlobEngine, MIN = E.MIN, DAY = E.DAY;
+  const $ = s => document.querySelector(s), $$ = s => [...document.querySelectorAll(s)];
+  const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} },
   };
-  for (const e of fixed) {
-    if (e.start > t) fill(e.start);
-    if (e.end <= t) continue;
-    const s = Math.max(t, e.start);
-    if (e.meal) push({ kind: 'meal', name: 'Meal break', dur: e.end - s, note: 'Step away from the desk' });
-    else push({ kind: 'event', name: e.title, dur: e.end - s, cat: e.cat || 'work', at: e.start, evId: e.id });
+  let seq = 0; const uid = p => `${p}-${Date.now().toString(36)}${(seq++).toString(36)}`;
+
+  /* ---------- colour system (from the handoff) ---------- */
+  const CATS = {
+    project:  { label: 'Planning & projects', c: ['#b49bff', '#5a35ff'] },
+    email:    { label: 'Email & admin',       c: ['#d48bff', '#8a2be2'] },
+    fitness:  { label: 'Fitness & personal',  c: ['#5ab8ff', '#1747ff'] },
+    meal:     { label: 'Meals & breaks',      c: ['#ffc061', '#ff6a00'] },
+    meeting:  { label: 'Meetings',            c: ['#ff86cc', '#ff1f7a'] },
+    creative: { label: 'Creative',            c: ['#e6f6ff', '#7cc4ff'], light: true },
+  };
+  const catOf = c => CATS[c] || CATS[c === 'personal' ? 'fitness' : 'project'];
+  const BRAIN = ['#e0ff5c', '#5fd413'];
+  const STATUS = { healthy: 'Healthy', attention: 'Needs attention', critical: 'Critical', completed: 'Completed' };
+  const stColor = s => `var(--${s})`;
+
+  /* ---------- clock: sample day runs on a demo clock so it always looks like a workday ---------- */
+  const clock = { real: store.get('blob.realClock', false), speed: 1, base: 0, anchor: 0 };
+  const now = () => clock.real ? Date.now() : clock.base + (Date.now() - clock.anchor) * clock.speed;
+  const setNow = ms => { clock.base = ms; clock.anchor = Date.now(); };
+  const setSpeed = v => { setNow(now()); clock.speed = v; };
+  // The sample day is today, or next Monday when today is a weekend.
+  const demoDay = () => { let d = E.dayOf(Date.now()); while ([0, 6].includes(new Date(d).getDay())) d = E.addDays(d, 1); return d; };
+  const today9 = () => demoDay() + (9 * 60 + 20) * MIN;
+
+  /* ---------- sample data, clearly labeled ---------- */
+  function sampleState(startAt) {
+    // Day 0 is the sample day; 1, 2, 3 are the following workdays.
+    const work = [E.dayOf(startAt)];
+    while (work.length < 6) { let d = E.addDays(work[work.length - 1], 1); while ([0, 6].includes(new Date(d).getDay())) d = E.addDays(d, 1); work.push(d); }
+    const t = (d, hm) => { const [h, m] = hm.split(':').map(Number); return work[d] + (h * 60 + m) * MIN; };
+    const cal = 'Sample calendar';
+    let s = E.createState({
+      events: [
+        { id: 'ev-standup', title: 'Team standup', start: t(0, '09:30'), dur: 15, cat: 'meeting', source: cal },
+        { id: 'ev-review', title: 'Client review', start: t(0, '14:00'), dur: 60, cat: 'meeting', source: cal },
+        { id: 'ev-gym', title: 'Gym', start: t(0, '17:30'), dur: 45, cat: 'fitness', source: cal },
+        { id: 'ev-crit', title: 'Design crit', start: t(1, '11:00'), dur: 60, cat: 'meeting', source: cal },
+        { id: 'ev-run', title: 'Run club', start: t(1, '17:15'), dur: 45, cat: 'fitness', source: cal },
+        { id: 'ev-1on1', title: '1:1 with Sam', start: t(2, '10:00'), dur: 30, cat: 'meeting', source: cal },
+      ],
+      sessions: [
+        { id: 'se-inbox', title: 'Inbox sweep', cat: 'email', start: t(0, '10:00'), dur: 30, source: 'Sample task' },
+        { id: 'se-sketch', title: 'Album cover sketches', cat: 'creative', start: t(0, '10:45'), dur: 60, source: 'Sample task' },
+        { id: 'se-plan', title: 'Plan next week', cat: 'project', start: t(0, '15:20'), dur: 45, source: 'Sample task' },
+        { id: 'se-label', title: 'Reply to label', cat: 'email', start: t(1, '09:30'), dur: 30, source: 'Sample task' },
+        { id: 'se-mix', title: 'Mix review', cat: 'creative', start: t(1, '14:00'), dur: 60, source: 'Sample task' },
+        { id: 'se-walk', title: 'Walk', cat: 'fitness', start: t(2, '12:00'), dur: 20, source: 'Sample task' },
+      ],
+    });
+    // One deadline already set up, so the deadline-aware flow is visible on first open.
+    s.deadlines.push({ id: 'dl-grant', title: 'Grant application', due: t(4, '17:00'), cat: 'project', sessionLen: 60, report: null, done: false });
+    s.sessions.push(
+      { id: 'dl-grant-s1', title: 'Grant application', cat: 'project', start: t(2, '14:00'), dur: 60, deadlineId: 'dl-grant', status: 'planned', source: 'Sample deadline' },
+      { id: 'dl-grant-s2', title: 'Grant application', cat: 'project', start: t(3, '10:00'), dur: 60, deadlineId: 'dl-grant', status: 'planned', source: 'Sample deadline' });
+    s.sample = true;
+    return s;
   }
-  fill(end);
-  return items;
-}
 
-/* ---------- State ---------- */
-let items = [], idx = 0, remaining = 0, running = false, started = false, speed = 1, lastTick = Date.now(), warned = {}, finished = false;
-const saveDay = () => store.set('blobs.day', { date: todayKey(), items, started });
-(function restore() {
-  const d = store.get('blobs.day', null);
-  if (d && d.date === todayKey() && Array.isArray(d.items) && d.items.length && !d.started) items = d.items;
-  else items = buildDay();
-  remaining = items[0] ? items[0].dur * 60 : 0;
-})();
+  /* ---------- state ---------- */
+  let saved = store.get('blob.state', null);
+  const savedClock = store.get('blob.clock', null);
+  const fresh = saved && saved.day === E.dayOf(Date.now());
+  if (!clock.real) setNow(fresh && savedClock ? savedClock : today9());
+  let state = fresh ? saved.state : sampleState(now());
+  const save = () => { store.set('blob.state', { day: E.dayOf(Date.now()), state }); if (!clock.real) store.set('blob.clock', now()); };
+  save();
 
-/* Recompute start times from the current blob onwards (after edits, reorders, +5). */
-function reflow() {
-  if (!items.length) return;
-  for (let i = Math.max(1, idx); i < items.length; i++) items[i].start = items[i - 1].start + items[i - 1].dur;
-}
-function rebuild() {
-  if (started) {
-    const keep = items.slice(0, idx + 1), cur = items[idx];
-    const rest = buildDay(cur.start + cur.dur);
-    items = keep.concat(rest);
-  } else { items = buildDay(); idx = 0; remaining = items[0] ? items[0].dur * 60 : 0; }
-  saveDay(); renderAll();
-}
+  const ui = { selected: null, zoom: store.get('blob.zoom', 1), proposal: null, card: null, missedAsked: new Set() };
+  let timer = store.get('blob.timer', null); // {id, endsAt, left, total, running}
+  const saveTimer = () => store.set('blob.timer', timer);
 
-/* ---------- Big blob ---------- */
-const big = new Jelly($('#big'), { colors: colorsFor(items[0]), wobble: 1.2, points: 36 });
-function renderBig() {
-  const b = items[idx];
-  if (finished || !b) {
-    $('#bigCat').textContent = finished ? 'Day complete' : 'Nothing planned';
-    $('#bigName').textContent = finished ? 'No blobs left' : 'Add a project or a blob';
-    $('#time').textContent = '00:00'; $('#bigNext').textContent = finished ? 'Nice work today.' : '';
-    return;
+  /* ---------- formatting ---------- */
+  const clk = ms => E.clock(ms);
+  const mmss = s => { s = Math.max(0, Math.round(s)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60; return h ? `${h}:${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}` : `${String(m).padStart(2, '0')}:${String(x).padStart(2, '0')}`; };
+  const durTxt = m => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? ' ' + (m % 60) + 'm' : ''}` : `${m}m`;
+  const until = ms => { const d = ms - now(); if (d <= 0) return 'now'; const m = Math.round(d / MIN); if (m < 60) return `in ${m}m`; const h = Math.floor(m / 60); if (h < 24) return `in ${h}h ${m % 60}m`; return `in ${Math.floor(h / 24)}d ${h % 24}h`; };
+  const dayLabel = day => { const d = Math.round((day - E.dayOf(now())) / DAY); return d === 0 ? 'Today' : d === 1 ? 'Tomorrow' : new Date(day).toLocaleDateString('en-US', { weekday: 'long' }); };
+
+  /* ---------- what's on the string ---------- */
+  // A week ahead, stretched to reach any open deadline in the next two weeks.
+  const VISIBLE_DAYS = 7;
+  function flowItems() {
+    const n = now(), d0 = E.dayOf(n), out = [];
+    const lastDue = Math.max(0, ...state.deadlines.filter(d => !d.done).map(d => Math.round((E.dayOf(d.due) - d0) / DAY) + 1));
+    for (let i = 0; i < Math.min(14, Math.max(VISIBLE_DAYS, lastDue)); i++) {
+      const day = E.addDays(d0, i);
+      const list = E.dayFlow(state, day).filter(x => x.kind !== 'session' || x.status === 'planned' || x.status === 'active');
+      for (const d of state.deadlines) if (E.dayOf(d.due) === day) list.push({ id: 'due-' + d.id, kind: 'deadline', title: d.title, start: d.due, dur: 0, cat: d.cat, deadlineId: d.id, fixed: true });
+      list.sort((a, b) => a.start - b.start || (a.kind === 'deadline' ? 1 : -1));
+      list.forEach(x => { x.day = day; x.past = x.kind !== 'deadline' && E.end(x) <= n && x.status !== 'active'; x.missed = x.past && x.kind === 'session'; });
+      out.push(...list);
+    }
+    return out;
   }
-  const r = Math.max(0, Math.ceil(remaining));
-  $('#time').textContent = `${String(Math.floor(r / 60)).padStart(2, '0')}:${String(r % 60).padStart(2, '0')}`;
-  $('#bigCat').textContent = `${KIND_LABEL[b.kind] || 'Blob'} · ${CAT_LABEL[catOf(b)]}`;
-  $('#bigName').textContent = b.name;
-  const nx = items[idx + 1];
-  $('#bigNext').textContent = nx ? `Next at ${fmtClock(b.start + b.dur)}: ${nx.name}` : 'Last blob of the day';
-  const left = items.length - idx;
-  $('#count').textContent = `${left} blob${left === 1 ? '' : 's'} left`;
-  $('#music').textContent = 'Music: ' + ({ work: 'Work mix', personal: 'Chill mix', break: 'Chill mix' })[catOf(b)];
-}
-let bigKey = '';
-function paintBig() {
-  const c = finished ? FIXED.done : colorsFor(items[idx]), k = c.join();
-  if (k !== bigKey) { bigKey = k; big.setColors(c); document.documentElement.style.setProperty('--mode', c[0]); document.documentElement.style.setProperty('--mode2', c[1] || c[0]); }
-}
+  const findItem = id => flowItems().find(x => x.id === id);
+  const session = id => state.sessions.find(x => x.id === id);
+  const upcoming = () => flowItems().filter(x => !x.past && x.kind !== 'deadline');
 
-/* ---------- Today's blobs (tray) ---------- */
-const nodes = new Map();
-function blobSize(it) { return Math.round(Math.max(118, Math.min(184, 92 + it.dur * 1.1))); }
-function makeBlob(it) {
-  const el = document.createElement('div');
-  el.className = 'blob'; el.tabIndex = 0; el.setAttribute('role', 'listitem');
-  el.innerHTML = '<div class="face"><span class="t"></span><strong class="n"></strong><span class="d"></span></div>';
-  el._jelly = new Jelly(el, { colors: colorsFor(it), wobble: 0.8, points: 26 });
-  el._key = colorsFor(it).join();
-  attachDrag(el);
-  el.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openEdit(el.dataset.id); } });
-  return el;
-}
-function renderTray() {
-  const host = $('#blobs'), future = items.slice(started ? idx + 1 : 1);
-  const want = new Set(future.map(i => i.id));
-  for (const [id, el] of nodes) if (!want.has(id)) { nodes.delete(id); if (el.isConnected) el._jelly.pop().then(() => el.remove()); }
-  future.forEach((it, i) => {
-    let el = nodes.get(it.id);
-    if (!el) { el = makeBlob(it); nodes.set(it.id, el); }
-    el.dataset.id = it.id;
-    const s = blobSize(it); el.style.setProperty('--s', s + 'px');
-    el.querySelector('.n').textContent = it.name;
-    const late = it.kind === 'event' && it.at != null && Math.abs(it.at - it.start) > 4;
-    el.querySelector('.t').textContent = fmtClock(it.start);
-    el.querySelector('.d').textContent = late ? `booked ${fmtClock(it.at)}` : `${it.dur} min`;
-    el.classList.toggle('late', late);
-    el.setAttribute('aria-label', `${it.name}, ${fmtClock(it.start)}, ${it.dur} minutes. Press Enter to edit.`);
-    const k = colorsFor(it).join(); if (k !== el._key) { el._key = k; el._jelly.setColors(colorsFor(it)); }
-    if (host.children[i] !== el) host.insertBefore(el, host.children[i] || null);
+  /* ---------- layout + elastic motion ---------- */
+  const stage = $('#stage'), track = $('#track'), lane = $('#lane'), strandsCv = $('#strands'), sg = strandsCv.getContext('2d');
+  const nodes = new Map(); let order = [], dividers = [];
+  const GAP = 20;
+  const sizeFor = it => it.kind === 'deadline' ? 136 : it.past ? 84 : Math.max(106, Math.min(168, 100 + it.dur * 0.62));
+
+  function layout(list) {
+    const z = ui.zoom * (innerWidth > 760 ? 1 : 0.72), mid = track.clientHeight * (innerWidth > 760 ? 0.42 : 0.5), pos = [], divs = [];
+    let x = 50 * z, prevDay = list.length ? list[0].day : null;
+    divs.push({ x: 40 * z, day: prevDay, first: true });
+    list.forEach((it, i) => {
+      if (it.day !== prevDay) { x += 46 * z; divs.push({ x, day: it.day }); x += 46 * z; prevDay = it.day; }
+      const s = sizeFor(it) * z;
+      x += s / 2;
+      pos.push({ x, y: mid + Math.sin(i * 1.3) * 10 * z, s });
+      x += s / 2 + GAP * z;
+    });
+    return { pos, divs, width: x + 60 };
+  }
+
+  function brainInLane() {
+    const b = $('#brain').getBoundingClientRect(), l = lane.getBoundingClientRect();
+    return { x: b.left + b.width / 2 - l.left, y: b.top + b.height / 2 - l.top };
+  }
+
+  function makeNode(it) {
+    const wrap = document.createElement('div'); wrap.className = 'node'; wrap.setAttribute('role', 'listitem');
+    const el = document.createElement('button'); el.className = 'blob'; el.type = 'button';
+    el.innerHTML = '<span class="face"><span class="t"></span><strong class="n"></strong><span class="d"></span></span>';
+    wrap.appendChild(el); lane.appendChild(wrap);
+    const n = { id: it.id, wrap, el, x: 0, y: 0, vx: 0, vy: 0, sc: 0.2, vs: 0, tx: 0, ty: 0, ts: 0, size: 0 };
+    n.jelly = new Jelly(el, { colors: catOf(it.cat).c, glow: true, radius: 0.46, points: 26, wobble: 1.1 });
+    el.addEventListener('click', () => select(n.id));
+    return n;
+  }
+
+  function paintNode(n, it) {
+    const el = n.el, c = catOf(it.cat);
+    const cls = ['blob', it.kind, it.past && 'past', it.missed && 'missed', it.kind === 'session' && timer && timer.id === it.id && 'active',
+      ui.selected === it.id && 'selected', c.light && 'light', ui.proposal && ui.proposal.touch.has(it.id) && 'preview'];
+    let st = null;
+    if (it.deadlineId) { st = E.deadlineStatus(state, it.deadlineId, now()); if (st) cls.push(st.state); }
+    el.className = cls.filter(Boolean).join(' ');
+    el.style.setProperty('--st', st ? stColor(st.state) : '');
+    const [t, nm, d] = el.querySelectorAll('.face > *');
+    if (it.kind === 'deadline') {
+      t.textContent = 'DUE'; nm.textContent = it.title; d.textContent = `${clk(it.start)} · ${until(it.start)}`;
+    } else {
+      t.textContent = clk(it.start); nm.textContent = it.title; d.textContent = durTxt(it.dur);
+    }
+    let tag = el.querySelector('.tag');
+    if (it.kind === 'session' && st) { if (!tag) { tag = document.createElement('span'); tag.className = 'tag'; el.appendChild(tag); } tag.title = `${STATUS[st.state]}: ${st.reason}`; }
+    else if (tag) tag.remove();
+    const label = it.kind === 'deadline' ? `Deadline: ${it.title}, due ${E.when(it.start, now())}${st ? ', ' + STATUS[st.state] : ''}`
+      : `${it.title}, ${E.when(it.start, now())}, ${durTxt(it.dur)}${it.fixed ? ', calendar event' : ''}${it.missed ? ', missed' : ''}`;
+    el.setAttribute('aria-label', label);
+    if (n.cat !== it.cat) { n.jelly.setColors(c.c); n.cat = it.cat; }
+    n.jelly.dim = it.past ? 0.3 : 1;
+  }
+
+  function render() {
+    const list = flowItems(), L = layout(list), ids = new Set(list.map(x => x.id));
+    for (const [id, n] of nodes) if (!ids.has(id) && !n.leaving) {
+      n.leaving = true; n.el.classList.add('popping');
+      setTimeout(() => { n.wrap.remove(); nodes.delete(id); }, 440);
+    }
+    const from = brainInLane();
+    list.forEach((it, i) => {
+      let n = nodes.get(it.id);
+      if (!n || n.leaving) { if (n) { n.wrap.remove(); } n = makeNode(it); n.x = from.x; n.y = from.y; n.sc = 0.15; nodes.set(it.id, n); }
+      const p = L.pos[i];
+      n.tx = p.x; n.ty = p.y;
+      if (Math.abs(n.size - p.s) > 0.5) { n.size = p.s; n.wrap.style.width = n.wrap.style.height = p.s + 'px'; }
+      n.item = it; paintNode(n, it);
+    });
+    order = list.map(x => x.id);
+    lane.style.width = L.width + 'px';
+    lane.querySelectorAll('.divider,.nowpin').forEach(d => d.remove());
+    dividers = L.divs;
+    for (const d of L.divs) { const el = document.createElement('div'); el.className = 'divider'; el.style.left = d.x + 'px'; el.textContent = dayLabel(d.day); lane.appendChild(el); }
+    const firstUp = list.find(x => !x.past);
+    if (firstUp) { const p = L.pos[list.indexOf(firstUp)], pin = document.createElement('div'); pin.className = 'nowpin'; pin.textContent = `now ${clk(now())}`; pin.style.left = p.x + 'px'; pin.style.top = (p.y - p.s / 2 - 34) + 'px'; lane.appendChild(pin); }
+    renderBrain();
+  }
+
+  // One loop: springs pull each blob to its place (overshooting a little, like jelly), then the strands are drawn.
+  let lastT = 0;
+  function frame(ts) {
+    const dt = Math.min(0.033, (ts - (lastT || ts)) / 1000) || 0.016; lastT = ts;
+    const k = 90, c = 11;
+    for (const n of nodes.values()) {
+      n.vx += (k * (n.tx - n.x) - c * n.vx) * dt; n.vy += (k * (n.ty - n.y) - c * n.vy) * dt;
+      n.vs += (140 * (1 - n.sc) - 12 * n.vs) * dt;
+      n.x += n.vx * dt; n.y += n.vy * dt; n.sc += n.vs * dt;
+      const s = n.size;
+      n.wrap.style.transform = `translate(${n.x - s / 2}px,${n.y - s / 2}px) scale(${Math.max(0.05, n.sc)})`;
+      // A fast move squishes the jelly in the direction of travel.
+      if (Math.abs(n.vx) > 220 && n.jelly) n.jelly.vx += n.vx * 0.002;
+    }
+    drawStrands(ts / 1000);
+    requestAnimationFrame(frame);
+  }
+
+  function drawStrands(t) {
+    const r = stage.getBoundingClientRect(), dpr = Math.min(2, devicePixelRatio || 1);
+    if (strandsCv.width !== Math.round(r.width * dpr) || strandsCv.height !== Math.round(r.height * dpr)) { strandsCv.width = Math.round(r.width * dpr); strandsCv.height = Math.round(r.height * dpr); }
+    sg.setTransform(dpr, 0, 0, dpr, 0, 0); sg.clearRect(0, 0, r.width, r.height);
+    const l = lane.getBoundingClientRect(), tr = track.getBoundingClientRect(), ox = l.left - r.left, oy = l.top - r.top;
+    const pts = order.map(id => nodes.get(id)).filter(n => n && !n.leaving).map(n => ({ x: n.x + ox, y: n.y + oy, s: n.size * n.sc, c: catOf(n.item.cat).c[1], past: n.item.past, kind: n.item.kind }));
+    const b = $('#brain').getBoundingClientRect();
+    const brain = { x: b.left + b.width / 2 - r.left, y: b.top + b.height / 2 - r.top, s: b.width * 0.92, c: BRAIN[1] };
+    const first = pts.find(p => !p.past);
+    sg.save();
+    sg.beginPath(); sg.rect(tr.left - r.left, 0, tr.width, r.height); sg.clip();
+    for (let i = 0; i < pts.length - 1; i++) strand(pts[i], pts[i + 1], t, i, pts[i].past || pts[i + 1].past ? 0.25 : 1);
+    sg.restore();
+    if (first && innerWidth > 760) {
+      const tgt = first.x < tr.left - r.left ? { ...first, x: tr.left - r.left + 4 } : first;
+      strand(brain, tgt, t, -1, 1);
+    }
+  }
+  // A strand is a glowing jelly bridge: thick where it meets each blob, pinched in the middle, and it
+  // thins out as it stretches.
+  function strand(a, b, t, i, alpha) {
+    const dx = b.x - a.x, dy = b.y - a.y, dist = Math.hypot(dx, dy) || 1, ux = dx / dist, uy = dy / dist;
+    const ra = a.s * 0.4, rb = b.s * 0.4;
+    const span = dist - ra - rb; if (span < -10) return;
+    const w0 = Math.min(a.s, b.s) * 0.12, pinch = Math.max(1.5, w0 * Math.min(0.75, 36 / Math.max(10, span)));
+    const ax = a.x + ux * ra * 0.8, ay = a.y + uy * ra * 0.8, bx = b.x - ux * rb * 0.8, by = b.y - uy * rb * 0.8;
+    const mx = (ax + bx) / 2, my = (ay + by) / 2 + Math.sin(t * 2.1 + i) * 3;
+    const nx = -uy, ny = ux;
+    const grad = sg.createLinearGradient(ax, ay, bx, by); grad.addColorStop(0, a.c); grad.addColorStop(1, b.c);
+    sg.save(); sg.globalAlpha = alpha;
+    sg.shadowColor = b.c; sg.shadowBlur = 16; sg.fillStyle = grad;
+    sg.beginPath();
+    sg.moveTo(ax + nx * w0, ay + ny * w0);
+    sg.quadraticCurveTo(mx + nx * pinch, my + ny * pinch, bx + nx * w0, by + ny * w0);
+    sg.lineTo(bx - nx * w0, by - ny * w0);
+    sg.quadraticCurveTo(mx - nx * pinch, my - ny * pinch, ax - nx * w0, ay - ny * w0);
+    sg.closePath(); sg.fill();
+    sg.shadowBlur = 0; sg.globalAlpha = alpha * 0.55; sg.strokeStyle = 'rgba(255,255,255,.7)'; sg.lineWidth = Math.max(1, pinch * 0.35);
+    sg.beginPath(); sg.moveTo(ax + nx * w0 * 0.4, ay + ny * w0 * 0.4); sg.quadraticCurveTo(mx + nx * pinch * 0.4, my + ny * pinch * 0.4, bx + nx * w0 * 0.4, by + ny * w0 * 0.4); sg.stroke();
+    sg.restore();
+  }
+
+  /* ---------- the Brain ---------- */
+  const brainJelly = new Jelly($('#brain'), { colors: BRAIN, glow: true, radius: 0.45, points: 36, wobble: 0.9 });
+  const SEGS = 14;
+  $('#gauge').innerHTML = Array.from({ length: SEGS }, (_, i) => {
+    const a0 = (-160 + i * (140 / SEGS) + 1.5) * Math.PI / 180, a1 = (-160 + (i + 1) * (140 / SEGS) - 1.5) * Math.PI / 180, R = 66;
+    const p = a => `${100 + Math.cos(a) * R} ${100 + Math.sin(a) * R}`;
+    return `<path d="M ${p(a0)} A ${R} ${R} 0 0 1 ${p(a1)}" stroke-width="9" stroke-linecap="round" fill="none"/>`;
+  }).join('');
+  const segColor = i => { const t = i / (SEGS - 1); return t < 0.5 ? `hsl(${130 - t * 120} 100% 55%)` : `hsl(${70 - (t - 0.5) * 80} 100% 55%)`; };
+
+  function renderBrain() {
+    const n = now(), act = timer && session(timer.id);
+    const segs = $$('#gauge path');
+    let frac = 0;
+    if (act) {
+      const left = timer.running ? (timer.endsAt - n) / 1000 : timer.left / 1000;
+      frac = Math.max(0, Math.min(1, left * 1000 / timer.total));
+      $('#brainLbl').textContent = timer.running ? catOf(act.cat).label : 'Paused';
+      $('#brainTime').textContent = mmss(left);
+      $('#brainTitle').textContent = act.title;
+      const nx = upcoming().find(x => x.id !== act.id && x.start >= act.start);
+      $('#brainSub').textContent = nx ? `Then ${nx.title} at ${clk(nx.start)}` : '';
+      $('#go').textContent = timer.running ? 'Pause' : 'Resume'; $('#go').disabled = false;
+      $('#finish').hidden = false;
+    } else {
+      const nx = upcoming()[0];
+      $('#brainLbl').textContent = nx ? 'Up next' : 'All clear';
+      const d = nx && new Date(nx.start);
+      $('#brainTime').textContent = nx ? `${d.getHours() % 12 || 12}:${String(d.getMinutes()).padStart(2, '0')}` : '✓';
+      $('#brainTitle').textContent = nx ? nx.title : 'Nothing left on the string';
+      $('#brainSub').textContent = nx ? (nx.start > n ? until(nx.start) : 'happening now') : '';
+      const startable = nx && nx.kind === 'session';
+      $('#go').textContent = startable ? 'Start' : 'Start next';
+      $('#go').disabled = !upcoming().some(x => x.kind === 'session');
+      $('#finish').hidden = true;
+    }
+    segs.forEach((s, i) => { const on = act && i < Math.ceil(frac * SEGS); s.setAttribute('stroke', on ? segColor(SEGS - 1 - i) : 'rgba(10,40,0,.35)'); });
+    $('#clockBadge').textContent = `${clock.real ? '' : 'Demo clock '}${clk(n)}${clock.speed > 1 ? ' · ' + clock.speed + '×' : ''}`;
+    $('#dateLine').textContent = new Date(n).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
+    $('#sampleBadge').hidden = !state.sample;
+  }
+
+  /* ---------- timer ---------- */
+  // Pressing Start is your call, so the session moves to now without asking. Anything it now
+  // overlaps is a separate suggestion you approve.
+  function startTimer(id) {
+    const x = session(id); if (!x) return;
+    const n = now(), at = Math.floor(n / MIN) * MIN;
+    if (timer && timer.id !== id) { const prev = session(timer.id); if (prev && prev.status === 'active') state = E.apply(state, { changes: [{ op: 'status', id: prev.id, to: 'planned' }] }); }
+    const moved = Math.abs(x.start - at) > 15 * MIN;
+    state = E.apply(state, { changes: [...(moved ? [{ op: 'move', id, from: x.start, to: at }] : []), { op: 'status', id, to: 'active' }] });
+    timer = { id, total: x.dur * MIN, endsAt: n + x.dur * MIN, left: x.dur * MIN, running: true, warned: false };
+    saveTimer(); save(); cue('start', 'start'); brainJelly.jiggle(1.2); closeCard(); render(); syncDesktop();
+    if (moved) setTimeout(() => scrollToX((nodes.get(id)?.tx || 0) - track.clientWidth * 0.3), 80);
+    const p = E.proposeRunningLate(state, 0, n);
+    if (p.changes.length) {
+      p.summary = `Make room after “${x.title}”?`;
+      p.reason = `It now runs until ${clk(n + x.dur * MIN)}. ${p.reason}`;
+      setTimeout(() => showProposal(p), 500);
+    }
+    const clash = state.events.find(e => e.start < n + x.dur * MIN && E.end(e) > n);
+    if (clash && !p.changes.length) setTimeout(() => reply(`Heads up: <b>${esc(clash.title)}</b> is at ${clk(clash.start)}. Calendar events stay put, so you may want to pause for it.`), 500);
+  }
+  function togglePause() {
+    if (!timer) return;
+    if (timer.running) { timer.left = timer.endsAt - now(); timer.running = false; }
+    else { timer.endsAt = now() + timer.left; timer.running = true; }
+    saveTimer(); renderBrain(); syncDesktop();
+  }
+  function finishActive(id = timer && timer.id) {
+    if (!id) return;
+    const n = nodes.get(id);
+    if (n) n.jelly.pop();
+    state = E.apply(state, { changes: [{ op: 'status', id, to: 'done' }] });
+    if (timer && timer.id === id) timer = null;
+    saveTimer(); save(); cue(upcoming().some(x => x.kind === 'session') ? 'end' : 'done', upcoming().length ? 'tick' : 'done');
+    closeCard(); setTimeout(render, 120); brainJelly.jiggle(1.5); syncDesktop();
+  }
+  const requestStart = id => startTimer(id);
+
+  function tick() {
+    const n = now();
+    if (timer && timer.running) {
+      const left = timer.endsAt - n;
+      if (!timer.warned && left <= 2 * MIN && timer.total > 4 * MIN) { timer.warned = true; cue('warn', 'warn'); saveTimer(); }
+      if (left <= 0) { timer.left = 0; timer.running = false; saveTimer(); cue('end', 'end'); brainJelly.jiggle(2); showTimeUp(timer.id); syncDesktop(); }
+    }
+    // A session whose time passed without being started: offer a new time (once).
+    if (!ui.card) {
+      const missed = state.sessions.find(x => x.status === 'planned' && E.end(x) <= n && E.dayOf(x.start) === E.dayOf(n) && !ui.missedAsked.has(x.id) && (!timer || timer.id !== x.id));
+      if (missed) { ui.missedAsked.add(missed.id); showProposal(E.proposeMissed(state, missed.id, n)); }
+    }
+    renderBrain();
+  }
+
+  /* ---------- context card (mini-chat, proposals, details) ---------- */
+  const card = $('#card');
+  function openCard(html, kind) {
+    card.innerHTML = html; card.hidden = false; ui.card = kind;
+    card.querySelector('[data-x]')?.addEventListener('click', closeCard);
+    const mini = card.querySelector('.mini');
+    if (mini) mini.addEventListener('submit', e => { e.preventDefault(); const v = mini.querySelector('input').value.trim(); if (v) handleAsk(v, ui.selected); });
+  }
+  function closeCard() {
+    card.hidden = true; card.innerHTML = ''; ui.card = null;
+    if (ui.proposal) { ui.proposal = null; }
+    if (ui.selected) { ui.selected = null; }
+    render();
+  }
+  const xBtn = '<button class="ghost icon" data-x aria-label="Close">✕</button>';
+  const miniChat = ph => `<form class="mini"><input placeholder="${esc(ph)}" aria-label="Ask about this blob"><button class="ghost">Ask</button></form>`;
+  const statusChip = st => `<span class="status" style="--st:${stColor(st.state)}">${STATUS[st.state]}</span>`;
+
+  function select(id) {
+    const it = findItem(id); if (!it) return;
+    ui.selected = id; ui.proposal = null;
+    const n = now(), c = catOf(it.cat);
+    const kicker = `<span class="kicker"><i style="--a:${c.c[0]};--b:${c.c[1]}"></i>${esc(c.label)}${it.fixed && it.kind === 'event' ? ' · calendar' : ''}</span>`;
+    if (it.kind === 'deadline') return showDeadline(it.deadlineId);
+    if (it.kind === 'event' || it.kind === 'meal') {
+      openCard(`<div class="head"><div>${kicker}<h3>${esc(it.title)}</h3></div>${xBtn}</div>
+        <p class="meta">${E.when(it.start, n)} – ${clk(E.end(it))} · ${durTxt(it.dur)}</p>
+        <p class="from">${it.kind === 'meal' ? 'Lunch comes from your settings.' : `From your ${esc(it.source || 'calendar')}.`} Blob keeps it where it is.</p>`, 'detail');
+      return render();
+    }
+    const st = it.deadlineId && E.deadlineStatus(state, it.deadlineId, n);
+    const dl = it.deadlineId && state.deadlines.find(d => d.id === it.deadlineId);
+    const isActive = timer && timer.id === id;
+    openCard(`<div class="head"><div>${kicker}<h3>${esc(it.title)}</h3></div>${xBtn}</div>
+      <p class="meta">${E.when(it.start, n)} – ${clk(E.end(it))} · ${durTxt(it.dur)} you chose${it.missed ? ' · <b>missed</b>' : ''}</p>
+      ${dl ? `<p>Toward <b>${esc(dl.title)}</b>, due ${E.when(dl.due, n)} ${statusChip(st)}</p>` : ''}
+      <div class="actions">
+        ${isActive ? '<button class="primary" data-a="done">Done</button>' : '<button class="primary" data-a="start">Start timer</button>'}
+        <button class="ghost" data-a="later">Later today</button>
+        <button class="ghost" data-a="tomorrow">Tomorrow</button>
+        ${isActive ? '' : '<button class="ghost" data-a="done">Mark done</button>'}
+        ${dl ? '<button class="ghost" data-a="deadline">Deadline</button>' : ''}
+      </div>
+      ${miniChat('e.g. “move to 3pm”, “push to tomorrow”')}
+      <p class="from">${esc(it.source || 'You added this')}. <span class="label-ai">The helper follows fixed rules; it isn't AI.</span></p>`, 'detail');
+    card.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
+      const a = b.dataset.a;
+      if (a === 'start') requestStart(id);
+      else if (a === 'done') finishActive(id);
+      else if (a === 'deadline') showDeadline(it.deadlineId);
+      else showProposal(E.proposeMove(state, id, a, now()));
+    });
+    render();
+  }
+
+  function changeRows(p) {
+    const n = now();
+    const name = id => { const x = session(id) || state.events.find(e => e.id === id) || state.deadlines.find(d => d.id === id); return x ? x.title : id; };
+    return p.changes.map(c => {
+      if (c.op === 'add') return `<li><span class="op">add</span>${esc(c.item.title)} · ${E.when(c.item.start, n)} · ${durTxt(c.item.dur)}</li>`;
+      if (c.op === 'move') return `<li><span class="op">move</span>${esc(name(c.id))}: ${clk(c.from)} → ${E.when(c.to, n)}</li>`;
+      if (c.op === 'resize') return `<li><span class="op">extend</span>${esc(name(c.id))}: ${durTxt(c.from)} → ${durTxt(c.to)}</li>`;
+      if (c.op === 'status') return `<li><span class="op">${esc(c.to)}</span>${esc(name(c.id))}</li>`;
+      if (c.op === 'unplace') return `<li><span class="op">no time</span>${esc(name(c.id))} comes off the string until you pick a time</li>`;
+      if (c.op === 'deadline') return `<li><span class="op">deadline</span>${esc(c.item.title)}, due ${E.when(c.item.due, n)}</li>`;
+      if (c.op === 'event') return `<li><span class="op">calendar</span>${esc(c.item.title)} · ${clk(c.item.start)}–${clk(E.end(c.item))} (stays fixed)</li>`;
+      if (c.op === 'flag') return '';
+      return '';
+    }).join('');
+  }
+
+  function showProposal(p) {
+    const touched = new Set(p.changes.map(c => c.id));
+    ui.proposal = { p, touch: touched };
+    const can = p.changes.some(c => c.op !== 'flag');
+    openCard(`<div class="head"><div><span class="kicker">Suggestion</span><h3>${esc(p.summary)}</h3></div>${xBtn}</div>
+      <p>${esc(p.reason)}</p>
+      ${can ? `<ul class="changes">${changeRows(p)}</ul>` : ''}
+      ${p.options ? p.options.map((o, i) => `<button class="ghost" data-opt="${i}" style="margin-top:10px">Use ${esc(E.when(o.start, now()))}</button>`).join('') : ''}
+      <div class="actions">
+        ${can ? '<button class="primary" data-ok>Approve</button>' : ''}
+        <button class="ghost" data-no>${can ? 'Not now' : 'OK'}</button>
+      </div>
+      <p class="from">Nothing changes until you approve. <span class="label-ai">Rule-based helper, not AI.</span></p>`, 'proposal');
+    card.querySelector('[data-ok]')?.addEventListener('click', () => approve(p));
+    card.querySelector('[data-no]').addEventListener('click', closeCard);
+    card.querySelectorAll('[data-opt]').forEach(b => b.onclick = () => {
+      const id = p.conflicts[0], o = p.options[+b.dataset.opt];
+      showProposal(E.proposeMove(state, id, { start: o.start }, now()));
+    });
+    render();
+  }
+
+  function approve(p) {
+    const added = p.changes.filter(c => c.op === 'add').map(c => c.id);
+    state = E.apply(state, p); state.sample = state.sample && true;
+    save(); ui.proposal = null; closeCard();
+    sfx('tick');
+    if (p.after) p.after();
+    // Bring new or moved blobs into view and give them a wobble.
+    const focus = added[0] || (p.changes.find(c => c.op === 'move') || {}).id;
+    if (focus) setTimeout(() => { const n = nodes.get(focus); if (n) { scrollToX(n.tx - track.clientWidth * 0.35); n.jelly.jiggle(1.5); } }, 60);
+    if (timer && p.changes.some(c => c.op === 'move' && c.id === timer.id)) { timer = null; saveTimer(); }
+    render(); syncDesktop();
+  }
+
+  function showTimeUp(id) {
+    const x = session(id); if (!x) return;
+    ui.selected = id;
+    openCard(`<div class="head"><div><span class="kicker">Time's up</span><h3>${esc(x.title)}</h3></div>${xBtn}</div>
+      <p>Your ${durTxt(x.dur)} is done. What do you want to do?</p>
+      <div class="actions">
+        <button class="ghost" data-t="extend15">+15 min</button>
+        <button class="ghost" data-t="extend30">+30 min</button>
+        <button class="primary" data-t="finish">Finish</button>
+        <button class="ghost" data-t="reschedule">Reschedule the rest</button>
+      </div>`, 'timeup');
+    card.querySelectorAll('[data-t]').forEach(b => b.onclick = () => {
+      const choice = b.dataset.t;
+      if (choice === 'finish') return finishActive(id);
+      const p = E.proposeTimeUp(state, id, choice, now());
+      if (choice.startsWith('extend')) {
+        const add = (p.changes[0].to - p.changes[0].from) * MIN;
+        p.after = () => { timer = { ...timer, total: timer.total + add, endsAt: now() + add, left: add, running: true, warned: false }; saveTimer(); renderBrain(); syncDesktop(); };
+        if (p.changes.length === 1) return approve(p);   // nothing else moves: no need to ask
+      } else {
+        p.after = () => { timer = null; saveTimer(); renderBrain(); };
+      }
+      showProposal(p);
+    });
+  }
+
+  function showDeadline(dlId) {
+    const d = state.deadlines.find(o => o.id === dlId); if (!d) return;
+    const n = now(), st = E.deadlineStatus(state, dlId, n), c = catOf(d.cat);
+    const ss = state.sessions.filter(x => x.deadlineId === dlId && x.status !== 'moved').sort((a, b) => a.start - b.start);
+    ui.selected = 'due-' + dlId;
+    openCard(`<div class="head"><div><span class="kicker"><i style="--a:${c.c[0]};--b:${c.c[1]}"></i>Deadline</span><h3>${esc(d.title)}</h3></div>${xBtn}</div>
+      <p class="meta">Due ${E.when(d.due, n)} · ${until(d.due)}</p>
+      <p>${statusChip(st)} <span class="meta">${esc(st.reason)}</span></p>
+      <ul class="changes">${ss.length ? ss.map(x => `<li><span class="op">${x.status === 'done' ? 'done' : x.status === 'unplaced' ? 'no time' : 'session'}</span>${x.status === 'unplaced' ? 'Needs a new time' : E.when(x.start, n)} · ${durTxt(x.dur)}</li>`).join('') : '<li class="meta">No sessions planned.</li>'}</ul>
+      <p class="meta" style="margin-top:12px">How's it going? Only you know, so status comes from your answer.</p>
+      <div class="actions">
+        <button class="ghost" data-r="on-track">On track</button>
+        <button class="ghost" data-r="unsure">Not sure</button>
+        <button class="ghost" data-r="behind">Behind</button>
+        <button class="primary" data-r="done">It's done</button>
+        <button class="ghost" data-r="more">Add a session</button>
+      </div>`, 'deadline');
+    card.querySelectorAll('[data-r]').forEach(b => b.onclick = () => {
+      const r = b.dataset.r;
+      if (r === 'more') return showProposal(E.proposeAdd(state, { id: uid(dlId), title: d.title, cat: d.cat, dur: d.sessionLen || 60, deadlineId: dlId, source: 'You added this' }, now()));
+      state = E.report(state, dlId, r); save();
+      if (r === 'done') { const nd = nodes.get('due-' + dlId); if (nd) nd.jelly.jiggle(2); cue('done', 'done'); }
+      showDeadline(dlId); render();
+      if (r === 'behind') {
+        const p = E.proposeAdd(state, { id: uid(dlId), title: d.title, cat: d.cat, dur: d.sessionLen || 60, deadlineId: dlId, source: 'You added this' }, now());
+        if (p.changes.length) { p.summary = `Add another session for “${d.title}”?`; p.reason = `You said you're behind. ${p.reason}`; setTimeout(() => showProposal(p), 500); }
+      }
+    });
+    render();
+  }
+
+  /* ---------- rule-based helper (ask bar + mini-chat). Plain patterns, no AI. ---------- */
+  function parseTime(text) {
+    const m = text.match(/\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i) || text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\b/i);
+    if (!m) return null;
+    let h = +m[1]; const mi = +(m[2] || 0), ap = (m[3] || '').toLowerCase();
+    if (ap === 'pm' && h < 12) h += 12; if (ap === 'am' && h === 12) h = 0;
+    if (!ap && h < 8) h += 12;
+    const day = /tomorrow/i.test(text) ? E.addDays(E.dayOf(now()), 1) : E.dayOf(now());
+    return day + (h * 60 + mi) * MIN;
+  }
+  function targetSession(ctxId, text) {
+    if (ctxId && session(ctxId)) return session(ctxId);
+    const lower = text.toLowerCase();
+    const named = state.sessions.find(x => (x.status === 'planned' || x.status === 'active') && lower.includes(x.title.toLowerCase()));
+    if (named) return named;
+    if (timer && /\b(this|current)\b/.test(lower)) return session(timer.id);
+    const nx = upcoming().find(x => x.kind === 'session' && (!timer || x.id !== timer.id));
+    return nx ? session(nx.id) : null;
+  }
+  function reply(html) {
+    openCard(`<div class="head"><div><span class="kicker">Blob</span></div>${xBtn}</div><div class="reply">${html}</div>
+      <p class="from"><span class="label-ai">Rule-based helper, not AI.</span></p>`, 'reply');
+  }
+  function handleAsk(text, ctxId) {
+    const t = text.toLowerCase(), n = now();
+    if (/deadline|\bdue\b/.test(t)) return openDeadline();
+    if (/inbox|e-?mail|gmail/.test(t)) return showInbox();
+    let m = t.match(/(?:late|behind)(?:\s+by)?\s+(\d+)|(\d+)\s*(?:min|minutes)?\s*(?:late|behind)/);
+    if (m || /running late|i'?m late|behind schedule/.test(t)) return showProposal(E.proposeRunningLate(state, +(m && (m[1] || m[2])) || 15, n));
+    if (/what'?s next|next up|what now/.test(t)) {
+      const up = upcoming().slice(0, 3);
+      return reply(up.length ? up.map((x, i) => `${i ? '' : '<b>Next:</b> '}${esc(x.title)} at ${clk(x.start)}${x.kind === 'event' ? ' (calendar)' : ''}`).join('<br>') : 'Nothing left today. Add a blob with “+ Blob”.');
+    }
+    if (/^add\b|new blob|schedule\b/.test(t)) { const title = text.replace(/^(add|schedule)\s+/i, '').replace(/\s+(at|tomorrow).*$/i, '').trim(); return openBlob(title, parseTime(text)); }
+    const x = targetSession(ctxId, text);
+    if (/done|finished|complete/.test(t) && x) return finishActive(x.id);
+    if (/start|begin/.test(t) && x) return requestStart(x.id);
+    if (/move|push|shift|reschedule|later|tomorrow|\bat\b|\d\s*(am|pm)/.test(t)) {
+      if (!x) return reply('There are no flexible blobs to move. Calendar events stay where they are.');
+      const at = parseTime(text);
+      if (at) return showProposal(E.proposeMove(state, x.id, { start: at }, n));
+      if (/tomorrow/.test(t)) return showProposal(E.proposeMove(state, x.id, 'tomorrow', n));
+      if (/later|after/.test(t)) return showProposal(E.proposeMove(state, x.id, 'later', n));
+      return showProposal(E.proposeMove(state, x.id, 'next', n));
+    }
+    reply('I can move a blob (“move the inbox sweep to 3pm”, “push this to tomorrow”), shift your day (“I\'m 20 min late”), add a blob or a deadline, or tell you what\'s next.');
+  }
+  $('#ask').addEventListener('submit', e => { e.preventDefault(); const v = $('#askInput').value.trim(); if (!v) return; $('#askInput').value = ''; handleAsk(v, null); });
+  $$('#chips [data-ask]').forEach(b => b.onclick = () => handleAsk(b.dataset.ask, null));
+
+  /* ---------- sample inbox (Gmail stand-in) ---------- */
+  const SAMPLE_MAIL = [
+    { from: 'Studio booking', subj: 'Confirm Thursday session' },
+    { from: 'Label A&R', subj: 'Notes on the rough mix' },
+    { from: 'Accountant', subj: 'Receipts for October' },
+  ];
+  function showInbox() {
+    const p = E.proposeAdd(state, { id: uid('se'), title: 'Reply to 3 emails', cat: 'email', dur: 20, source: 'Suggested from sample inbox' }, now());
+    p.summary = 'Add a 20-minute email blob?'; p.reason = `3 starred threads in your sample inbox. ${p.reason}`;
+    showProposal(p);
+    const list = document.createElement('ul'); list.className = 'mail';
+    list.innerHTML = SAMPLE_MAIL.map(m => `<li><span class="who">${esc(m.from)}</span>${esc(m.subj)}</li>`).join('');
+    card.querySelector('p').after(list);
+    const note = document.createElement('p'); note.className = 'from'; note.textContent = 'Sample inbox. Gmail connects in a later phase, read-only, and Blob never sends or deletes mail.';
+    list.after(note);
+  }
+
+  /* ---------- dialogs ---------- */
+  const catOptions = sel => { sel.innerHTML = Object.entries(CATS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join(''); };
+  catOptions($('#dlCat')); catOptions($('#bCat'));
+  $$('dialog [data-close]').forEach(b => b.onclick = () => b.closest('dialog').close());
+  const isoDay = ms => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  function openDeadline() {
+    closeCard();
+    $('#dlName').value = ''; let due = E.dayOf(now()); for (let k = 0; k < 4;) { due = E.addDays(due, 1); if (![0, 6].includes(new Date(due).getDay())) k++; }
+    $('#dlDate').value = isoDay(due); $('#dlCat').value = 'project';
+    $('#deadlineDlg').showModal(); $('#dlName').focus();
+  }
+  $('#deadlineForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const [Y, Mo, D] = $('#dlDate').value.split('-').map(Number), [h, mi] = $('#dlTime').value.split(':').map(Number);
+    const due = new Date(Y, Mo - 1, D, h, mi).getTime();
+    $('#deadlineDlg').close();
+    if (due <= now()) return reply('That due time has already passed. Pick a later one.');
+    showProposal(E.proposeDeadline(state, { id: uid('dl'), title: $('#dlName').value.trim(), due, sessions: +$('#dlCount').value, sessionLen: +$('#dlLen').value, cat: $('#dlCat').value }, now()));
   });
-  const endAt = items.length ? items[items.length - 1].start + items[items.length - 1].dur : 0;
-  $('#traySum').textContent = future.length ? `${future.length} up next · done by ${fmtClock(endAt)}` : 'Nothing else today';
-}
-function toggleTray(open) {
-  const t = $('#tray'), o = open ?? t.hidden;
-  t.hidden = !o; $('#big').setAttribute('aria-expanded', String(o));
-  $('#hint').textContent = o ? 'Tap the big blob to close' : 'Tap the big blob to see what’s coming up';
-  if (o) { renderTray(); requestAnimationFrame(() => nodes.forEach(el => el._jelly.resize())); }
-}
+  function openBlob(title = '', at = null) {
+    closeCard();
+    $('#bName').value = title; $('#bCat').value = 'project';
+    $('#bWhen').value = at ? 'at' : 'next'; $('#bAtWrap').hidden = !at;
+    if (at) { const d = new Date(at); $('#bAt').value = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; }
+    $('#blobDlg').showModal(); $('#bName').focus();
+  }
+  $('#bWhen').onchange = () => { $('#bAtWrap').hidden = $('#bWhen').value !== 'at'; };
+  $('#blobForm').addEventListener('submit', e => {
+    e.preventDefault(); $('#blobDlg').close();
+    const s = { id: uid('se'), title: $('#bName').value.trim(), cat: $('#bCat').value, dur: +$('#bLen').value, source: 'You added this' };
+    if ($('#bWhen').value === 'at' && $('#bAt').value) { const [h, m] = $('#bAt').value.split(':').map(Number); s.start = E.dayOf(now()) + (h * 60 + m) * MIN; }
+    showProposal(E.proposeAdd(state, s, now()));
+  });
+  $('#addDeadline').onclick = openDeadline;
+  $('#addBlob').onclick = () => openBlob();
 
-/* Drag to rearrange. A tap (no movement) opens the editor. */
-function attachDrag(el) {
-  let sx, sy, dragging = false, pid = null;
-  el.addEventListener('pointerdown', e => { if (e.button) return; sx = e.clientX; sy = e.clientY; pid = e.pointerId; dragging = false; });
-  el.addEventListener('pointermove', e => {
-    if (pid !== e.pointerId) return;
-    const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (!dragging && Math.hypot(dx, dy) > 8) { dragging = true; el.setPointerCapture(pid); el.classList.add('dragging'); }
-    if (!dragging) return;
-    el.style.transform = `translate(${dx}px, ${dy}px) scale(1.06)`;
-    el.style.pointerEvents = 'none';
-    const over = document.elementFromPoint(e.clientX, e.clientY)?.closest('.blob');
-    el.style.pointerEvents = '';
-    if (over && over !== el && over.dataset.id) {
-      const from = items.findIndex(i => i.id === el.dataset.id), to = items.findIndex(i => i.id === over.dataset.id);
-      if (from > idx && to > idx || (!started && from >= 1 && to >= 1)) {
-        const [m] = items.splice(from, 1); items.splice(to, 0, m);
-        const r = el.getBoundingClientRect();
-        reflow(); renderTray();
-        const r2 = el.getBoundingClientRect(); sx += r2.left - r.left; sy += r2.top - r.top;
-        el.style.transform = `translate(${e.clientX - sx}px, ${e.clientY - sy}px) scale(1.06)`;
-        over._jelly.jiggle(0.6);
+  /* ---------- settings ---------- */
+  const hm = m => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+  const toM = v => { const [h, m] = v.split(':').map(Number); return h * 60 + m; };
+  function fillSettings() {
+    const p = state.prefs;
+    $('#sStart').value = hm(p.dayStart); $('#sEnd').value = hm(p.dayEnd); $('#sLunch').value = hm(p.lunch.start); $('#sBuffer').value = String(p.buffer);
+    $('#sReal').checked = clock.real; $('#pack').value = store.get('blob.pack', 'blob');
+    $('#icsUrl').value = store.get('blob.icsUrl', '');
+  }
+  $('#openSettings').onclick = () => { fillSettings(); $('#settingsDlg').showModal(); };
+  const setPrefs = patch => { state = { ...state, prefs: { ...state.prefs, ...patch } }; save(); render(); };
+  $('#sStart').onchange = e => setPrefs({ dayStart: toM(e.target.value) });
+  $('#sEnd').onchange = e => setPrefs({ dayEnd: toM(e.target.value) });
+  $('#sLunch').onchange = e => setPrefs({ lunch: { ...state.prefs.lunch, start: toM(e.target.value) } });
+  $('#sBuffer').onchange = e => setPrefs({ buffer: +e.target.value });
+  $('#sReal').onchange = e => { clock.real = e.target.checked; store.set('blob.realClock', clock.real); if (!clock.real) setNow(today9()); render(); };
+  $('#sSpeed').onclick = e => { setSpeed(clock.speed === 1 ? 60 : 1); e.target.textContent = `Demo speed: ${clock.speed === 1 ? 'off' : '60×'}`; e.target.setAttribute('aria-pressed', String(clock.speed !== 1)); renderBrain(); syncDesktop(); };
+  $('#pack').onchange = e => { store.set('blob.pack', e.target.value); sfx('start'); };
+  $$('[data-snd]').forEach(b => b.onclick = () => sfx(b.dataset.snd));
+  $('#resetSample').onclick = () => {
+    if (!clock.real) setNow(today9());
+    state = sampleState(now()); timer = null; saveTimer(); ui.missedAsked.clear(); save();
+    $('#settingsDlg').close(); nodes.forEach(n => n.wrap.remove()); nodes.clear(); render(); jumpNow();
+  };
+
+  /* ---------- calendar import (.ics file or the secret iCal link) ---------- */
+  function parseICS(text) {
+    const out = [], from = E.dayOf(now()), to = E.addDays(from, VISIBLE_DAYS);
+    const lines = text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
+    let ev = null;
+    const parseDate = (prop, val) => {
+      if (/VALUE=DATE(?!-)/.test(prop) || /^\d{8}$/.test(val)) return null;
+      const m = val.match(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)/); if (!m) return null;
+      const [, Y, Mo, D, h, mi, s, z] = m;
+      return z ? Date.UTC(+Y, +Mo - 1, +D, +h, +mi, +s) : new Date(+Y, +Mo - 1, +D, +h, +mi, +s).getTime();
+    };
+    for (const ln of lines) {
+      if (ln === 'BEGIN:VEVENT') ev = {};
+      else if (ln === 'END:VEVENT') { if (ev && ev.s && ev.e) out.push(ev); ev = null; }
+      else if (ev) {
+        const i = ln.indexOf(':'), prop = ln.slice(0, i), val = ln.slice(i + 1);
+        if (prop.startsWith('DTSTART')) ev.s = parseDate(prop, val);
+        else if (prop.startsWith('DTEND')) ev.e = parseDate(prop, val);
+        else if (prop === 'SUMMARY') ev.title = val.replace(/\\,/g, ',').replace(/\\n/g, ' ');
+        else if (prop === 'UID') ev.uid = val;
+        else if (prop === 'STATUS' && val === 'CANCELLED') ev.cancel = true;
       }
     }
+    return out.filter(e => !e.cancel && e.s >= from && e.s < to).map((e, i) => ({
+      id: 'ics-' + (e.uid || i) + '-' + e.s, title: e.title || 'Event', start: e.s, dur: Math.max(5, Math.round((e.e - e.s) / MIN)), source: 'Your calendar',
+      cat: /gym|workout|run\b|yoga|doctor|dentist|family|kids|personal/i.test(e.title || '') ? 'fitness' : /lunch|dinner|breakfast|coffee/i.test(e.title || '') ? 'meal' : 'meeting',
+    }));
+  }
+  function importEvents(list, label) {
+    // Real calendar replaces the sample one. Sessions it overlaps get new-time suggestions, not silent moves.
+    let staged = { ...state, events: state.events.filter(e => e.source !== 'Sample calendar' && e.source !== 'Your calendar') };
+    const changes = [];
+    for (const ev of list) { const p = E.proposeCalendarChange(staged, ev, now()); staged = E.apply(staged, p); changes.push(...p.changes); }
+    state = { ...state, events: staged.events.filter(e => e.source !== 'Your calendar') };
+    const moves = changes.filter(c => c.op !== 'event');
+    const p = { kind: 'calendar', summary: `${label}: ${list.length} event${list.length === 1 ? '' : 's'} in the next ${VISIBLE_DAYS} days`, reason: moves.length ? `${moves.filter(c => c.op === 'move').length} of your blobs overlap them and get the next open time.` : 'None of your blobs overlap them.', changes, conflicts: [] };
+    $('#calMsg').textContent = `Found ${list.length} event${list.length === 1 ? '' : 's'}. Approve the suggestion to add them.`;
+    $('#settingsDlg').close();
+    p.after = () => { state.sample = false; save(); render(); };
+    showProposal(p);
+  }
+  $('#icsFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; importEvents(parseICS(await f.text()), f.name); e.target.value = ''; };
+  const tauri = window.__TAURI__;
+  $('#icsUrlGo').onclick = async () => {
+    const url = $('#icsUrl').value.trim(); if (!url) return;
+    store.set('blob.icsUrl', url); $('#calMsg').textContent = 'Fetching your calendar…';
+    try {
+      const text = tauri?.core ? await tauri.core.invoke('fetch_text', { url }) : await (await fetch(url)).text();
+      importEvents(parseICS(text), 'Your calendar');
+    } catch (err) { $('#calMsg').textContent = tauri ? "Couldn't reach that calendar link. Check it's the secret iCal address." : 'Browsers block calendar links from other sites. In the Mac app this syncs directly; here, download the .ics and import it.'; }
+  };
+
+  /* ---------- demo scenarios ---------- */
+  $$('#chips [data-demo]').forEach(b => b.onclick = () => {
+    const n = now();
+    if (b.dataset.demo === 'skip') { if (clock.real) return reply('Skipping ahead only works on the demo clock. Turn off “Use the real clock” in Settings.'); setNow(n + 60 * MIN); if (timer && timer.running) {} render(); tick(); return; }
+    // A new meeting lands on top of your next flexible blob.
+    const nx = upcoming().find(x => x.kind === 'session' && (!timer || x.id !== timer.id));
+    const start = nx ? nx.start + 10 * MIN : Math.ceil((n + 60 * MIN) / (15 * MIN)) * 15 * MIN;
+    const p = E.proposeCalendarChange(state, { id: uid('ev'), title: 'Vendor call (sample)', start, dur: 30, cat: 'meeting', source: 'Sample calendar' }, n);
+    showProposal(p);
   });
-  const end = e => {
-    if (pid !== e.pointerId) return; pid = null;
-    if (dragging) { el.classList.remove('dragging'); el.style.transform = ''; el._jelly.jiggle(1); saveDay(); renderAll(); syncDesktop(); }
-    else if (e.type === 'pointerup') openEdit(el.dataset.id);
-    dragging = false;
+
+  /* ---------- pan, zoom, jump to now ---------- */
+  function scrollToX(x) { track.scrollTo({ left: Math.max(0, x), behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); }
+  function jumpNow() { const f = upcoming()[0]; const n = f && nodes.get(f.id); scrollToX(n ? n.tx - 90 * ui.zoom : 0); }
+  $('#jumpNow').onclick = jumpNow;
+  const zoomBy = d => { ui.zoom = Math.max(0.6, Math.min(1.5, +(ui.zoom + d).toFixed(2))); store.set('blob.zoom', ui.zoom); render(); };
+  $('#zoomIn').onclick = () => zoomBy(0.15); $('#zoomOut').onclick = () => zoomBy(-0.15);
+  track.addEventListener('wheel', e => {
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); zoomBy(e.deltaY < 0 ? 0.1 : -0.1); return; }
+    if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) { e.preventDefault(); track.scrollLeft += e.deltaY; }
+  }, { passive: false });
+  let pan = null;
+  track.addEventListener('pointerdown', e => { if (e.target.closest('.blob') || e.button !== 0) return; pan = { x: e.clientX, left: track.scrollLeft }; track.classList.add('panning'); track.setPointerCapture(e.pointerId); });
+  track.addEventListener('pointermove', e => { if (pan) track.scrollLeft = pan.left - (e.clientX - pan.x); });
+  const endPan = () => { pan = null; track.classList.remove('panning'); };
+  track.addEventListener('pointerup', endPan); track.addEventListener('pointercancel', endPan);
+  track.addEventListener('keydown', e => { if (e.key === 'ArrowRight') track.scrollLeft += 120; if (e.key === 'ArrowLeft') track.scrollLeft -= 120; });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && ui.card && !document.querySelector('dialog[open]')) closeCard(); });
+  new ResizeObserver(() => render()).observe(track);
+
+  /* ---------- Brain controls ---------- */
+  $('#go').onclick = () => {
+    if (timer) return togglePause();
+    const nx = upcoming().find(x => x.kind === 'session'); if (nx) requestStart(nx.id);
   };
-  el.addEventListener('pointerup', end); el.addEventListener('pointercancel', end);
-}
+  $('#finish').onclick = () => finishActive();
+  $('#brain').addEventListener('click', () => { if (timer) select(timer.id); else { const nx = upcoming()[0]; if (nx) select(nx.id); } });
 
-function shuffleDay() {
-  // Shuffle what's coming up; calendar events and meals keep their places.
-  const from = started ? idx + 1 : 1;
-  const slots = [], movable = [];
-  items.slice(from).forEach((it, i) => { if (it.kind === 'event' || it.kind === 'meal') slots.push([i, it]); else movable.push(it); });
-  for (let i = movable.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [movable[i], movable[j]] = [movable[j], movable[i]]; }
-  // keep a break after each focus where possible
-  const fx = movable.filter(x => x.kind === 'focus'), br = movable.filter(x => x.kind !== 'focus'), mixd = [];
-  while (fx.length || br.length) { if (fx.length) mixd.push(fx.shift()); if (br.length) mixd.push(br.shift()); }
-  const out = []; let m = 0;
-  for (let i = 0; i < items.length - from; i++) { const s = slots.find(x => x[0] === i); out.push(s ? s[1] : mixd[m++]); }
-  items = items.slice(0, from).concat(out.filter(Boolean));
-  reflow(); saveDay(); renderTray(); nodes.forEach(el => el._jelly.jiggle(1.2)); renderBig(); syncDesktop();
-}
-
-/* ---------- Edit dialog ---------- */
-let editing = null;
-function fillKindOptions() {
-  $('#eKind').innerHTML = projects.filter(p => p.name).map(p => `<option value="p:${p.id}">${esc(p.name)} (${CAT_LABEL[p.cat]})</option>`).join('') +
-    `<option value="task:work">Other work task</option><option value="task:personal">Personal thing</option>` +
-    `<option value="event:work">Meeting (work)</option><option value="event:personal">Personal event</option>` +
-    `<option value="snack">Snack break</option><option value="chill">Chill break</option><option value="meal">Meal break</option>`;
-}
-function kindValue(it) {
-  if (it.kind === 'focus') return 'p:' + it.proj;
-  if (it.kind === 'task' || it.kind === 'event') return `${it.kind}:${it.cat || 'work'}`;
-  return it.kind;
-}
-function openEdit(id) {
-  fillKindOptions();
-  editing = id ? items.find(i => i.id === id) : null;
-  $('#editTitle').textContent = editing ? 'Edit blob' : 'Add a blob';
-  $('#eName').value = editing ? editing.name : '';
-  $('#eDur').value = editing ? editing.dur : 30;
-  $('#eKind').value = editing ? kindValue(editing) : 'task:work';
-  $('#eDelete').hidden = $('#eEarlier').hidden = $('#eLater').hidden = $('#eNow').hidden = !editing;
-  $('#editDlg').showModal(); $('#eName').focus();
-}
-function applyKind(it, v) {
-  if (v.startsWith('p:')) { const p = projects.find(q => q.id === v.slice(2)); it.kind = 'focus'; it.proj = p.id; it.cat = p.cat; if (!it.name || it._auto) it.name = p.name; }
-  else if (v.includes(':')) { const [k, c] = v.split(':'); it.kind = k; it.cat = c; delete it.proj; }
-  else { it.kind = v; it.cat = 'break'; delete it.proj; if (!it.name) it.name = KIND_LABEL[v]; }
-}
-function moveEditing(dir) {
-  const i = items.indexOf(editing), j = i + dir, min = started ? idx + 1 : 1;
-  if (j < min || j >= items.length) return;
-  [items[i], items[j]] = [items[j], items[i]]; reflow(); saveDay(); renderTray(); renderBig();
-}
-$('#editForm').addEventListener('submit', e => {
-  e.preventDefault();
-  const it = editing || { id: uid(), start: 0 };
-  it.name = $('#eName').value.trim() || it.name || 'Blob';
-  it.dur = Math.max(5, Math.min(240, Math.round(+$('#eDur').value || 30)));
-  applyKind(it, $('#eKind').value);
-  if (!editing) items.push(it);
-  if (editing && items.indexOf(editing) === idx) remaining = Math.min(remaining, it.dur * 60);
-  reflow(); saveDay(); $('#editDlg').close(); renderAll(); syncDesktop();
-  nodes.get(it.id)?._jelly.jiggle(1);
-});
-$('#eCancel').onclick = () => $('#editDlg').close();
-$('#eEarlier').onclick = () => moveEditing(-1);
-$('#eLater').onclick = () => moveEditing(1);
-$('#eDelete').onclick = () => { items.splice(items.indexOf(editing), 1); reflow(); saveDay(); $('#editDlg').close(); renderAll(); syncDesktop(); };
-$('#eNow').onclick = () => {   // make this the very next blob
-  const i = items.indexOf(editing), to = started ? idx + 1 : 1;
-  items.splice(i, 1); items.splice(to, 0, editing); reflow(); saveDay(); $('#editDlg').close(); renderAll(); syncDesktop();
-};
-$('#eKind').onchange = e => { if (e.target.value.startsWith('p:') && !$('#eName').value) $('#eName').value = projects.find(p => 'p:' + p.id === e.target.value)?.name || ''; };
-
-/* ---------- Timer ---------- */
-function enter(i, afterEnd = 0) {
-  idx = i; warned = {};
-  if (idx >= items.length) {
-    running = false; started = false; finished = true; idx = items.length;
-    setTimeout(() => cue('done', 'done'), afterEnd * 1000);
-    $('#go').textContent = 'Start a new day'; say(customLine('done') || 'All blobs cleared.');
-    paintBig(); renderBig(); renderTray(); syncDesktop(); return;
+  /* ---------- sounds ---------- */
+  let actx;
+  function tone(f, t0, dur, type = 'sine', gain = .2, slideTo) {
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(f, actx.currentTime + t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, actx.currentTime + t0 + dur);
+    g.gain.setValueAtTime(0.0001, actx.currentTime + t0);
+    g.gain.exponentialRampToValueAtTime(gain, actx.currentTime + t0 + .02);
+    g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + t0 + dur);
+    o.connect(g).connect(actx.destination); o.start(actx.currentTime + t0); o.stop(actx.currentTime + t0 + dur + .05);
   }
-  const b = items[idx]; remaining = b.dur * 60; b.start = Math.round(started ? Math.min(b.start, nowMin()) : b.start);
-  const endLine = afterEnd ? customLine('end', items[idx - 1]?.name) : null;
-  say(endLine || customLine(MOMENT_OF[b.kind] || 'start', b.name) || '');
-  if (endLine) setTimeout(() => { if (items[idx] === b) say(customLine(MOMENT_OF[b.kind] || 'start', b.name) || ''); }, Math.max(2500, afterEnd * 1000));
-  paintBig(); renderBig(); renderTray(); syncDesktop(); big.jiggle(1.4);
-  setTimeout(() => cue(MOMENT_OF[b.kind] || 'start', 'start'), afterEnd * 1000);
-}
-const MOMENT_OF = { focus: 'start', task: 'start', event: 'start', snack: 'break', chill: 'break', meal: 'break' };
-function say(text) { $('#say').textContent = text; }
-
-function tick() {
-  const ts = Date.now();
-  if (running) {
-    remaining -= (ts - lastTick) / 1000 * speed;
-    let guard = 0;
-    while (running && remaining <= 0 && guard++ < 50) {
-      const over = -remaining;
-      if (guard === 1) cue('end', 'end');
-      enter(idx + 1, guard === 1 ? Math.max(0.7, clipLens.end || 0) : 0);
-      if (running) remaining -= over;
-    }
-    const b = items[idx];
-    if (running && b && b.dur > 6) {
-      if (remaining <= 300 && !warned.five) { warned.five = true; cue('warn', 'warn'); say(customLine('warn', b.name) || 'Five minutes left.'); big.jiggle(0.8); }
-      if (catOf(b) !== 'break' && b.dur >= 30 && remaining <= b.dur * 30 && !warned.half) { warned.half = true; checkIn(); }
-    }
-    renderBig();
+  function sfx(ev) {
+    try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume(); } catch (e) { return; }
+    const packs = {
+      blob: { start: () => { tone(520, 0, .18, 'sine', .25, 180); tone(780, .14, .22, 'sine', .18, 300); }, warn: () => tone(660, 0, .25, 'sine', .2, 260),
+              tick: () => tone(900, 0, .12, 'sine', .14, 400), end: () => { tone(300, 0, .3, 'sine', .3, 90); tone(620, .18, .25, 'sine', .16, 200); },
+              done: () => [392, 523, 659, 784].forEach((f, i) => tone(f, i * .14, .3, 'sine', .2, f * .6)) },
+      crisp: { start: () => { tone(2100, 0, .12, 'square', .08); tone(2100, .16, .35, 'square', .08, 1900); }, warn: () => tone(1800, 0, .15, 'square', .07), tick: () => tone(1500, 0, .08, 'square', .06), end: () => { tone(2200, 0, .5, 'square', .09, 2000); tone(2200, .55, .5, 'square', .09, 2000); }, done: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, i * .12, .25, 'triangle', .15)) },
+      soft: { start: () => { tone(659, 0, 1.2, 'sine', .18); tone(988, .15, 1.2, 'sine', .1); }, warn: () => tone(784, 0, 1, 'sine', .14), tick: () => tone(1175, 0, .4, 'sine', .08), end: () => [784, 659, 523].forEach((f, i) => tone(f, i * .25, 1.1, 'sine', .15)), done: () => [523, 659, 784, 988].forEach((f, i) => tone(f, i * .3, 1.4, 'sine', .12)) },
+    };
+    ((packs[store.get('blob.pack', 'blob')] || packs.blob)[ev] || (() => {}))();
   }
-  lastTick = ts;
-}
-function checkIn() {
-  const b = items[idx]; if (!b) return;
-  const leftFocus = items.slice(idx + 1).filter(x => catOf(x) !== 'break').reduce((s, x) => s + x.dur, 0) + (catOf(b) !== 'break' ? Math.ceil(remaining / 60) : 0);
-  const status = `${Math.max(0, Math.ceil(remaining / 60))} min left on ${b.name}. ${items.length - idx - 1} blobs after this, ${(leftFocus / 60).toFixed(1)} h of work to go.`;
-  const own = customLine('update', b.name);
-  say(own ? `${own} ${status}` : status); cue('update', 'tick'); big.jiggle(0.6);
-}
+  async function cue(moment, synth) { const d = await (window.playBite ? playBite(moment).catch(() => 0) : 0); if (!d && synth) sfx(synth); }
+  if (window.setupSounds) setupSounds((what, id) => { if (what === 'play') cue(id, { start: 'start', warn: 'warn', end: 'end', break: 'tick', update: 'tick', done: 'done' }[id]); });
 
-/* ---------- Sounds ---------- */
-let ctx;
-function tone(freq, t0, dur, type = 'sine', gain = .2, glide) {
-  const o = ctx.createOscillator(), g = ctx.createGain();
-  o.type = type; o.frequency.setValueAtTime(freq, ctx.currentTime + t0);
-  if (glide) o.frequency.exponentialRampToValueAtTime(glide, ctx.currentTime + t0 + dur);
-  g.gain.setValueAtTime(0.0001, ctx.currentTime + t0);
-  g.gain.exponentialRampToValueAtTime(gain, ctx.currentTime + t0 + .02);
-  g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t0 + dur);
-  o.connect(g).connect(ctx.destination); o.start(ctx.currentTime + t0); o.stop(ctx.currentTime + t0 + dur + .05);
-}
-function sfx(ev) {
-  try { ctx = ctx || new (window.AudioContext || window.webkitAudioContext)(); if (ctx.state === 'suspended') ctx.resume(); } catch (e) { return; }
-  const packs = {
-    // Squishy bloops: sine sweeps that drop in pitch like a blob landing.
-    blob: { start: () => { tone(520, 0, .18, 'sine', .25, 180); tone(780, .14, .22, 'sine', .18, 300); }, warn: () => tone(660, 0, .25, 'sine', .2, 260),
-            tick: () => tone(900, 0, .12, 'sine', .14, 400), end: () => { tone(300, 0, .3, 'sine', .3, 90); tone(620, .18, .25, 'sine', .16, 200); },
-            done: () => [392, 523, 659, 784].forEach((f, i) => tone(f, i * .14, .3, 'sine', .2, f * .6)) },
-    crisp: { start: () => { tone(2100, 0, .12, 'square', .08); tone(2100, .16, .35, 'square', .08, 1900); }, warn: () => tone(1800, 0, .15, 'square', .07), tick: () => tone(1500, 0, .08, 'square', .06), end: () => { tone(2200, 0, .5, 'square', .09, 2000); tone(2200, .55, .5, 'square', .09, 2000); }, done: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, i * .12, .25, 'triangle', .15)) },
-    soft: { start: () => { tone(659, 0, 1.2, 'sine', .18); tone(988, .15, 1.2, 'sine', .1); }, warn: () => tone(784, 0, 1, 'sine', .14), tick: () => tone(1175, 0, .4, 'sine', .08), end: () => [784, 659, 523].forEach((f, i) => tone(f, i * .25, 1.1, 'sine', .15)), done: () => [523, 659, 784, 988].forEach((f, i) => tone(f, i * .3, 1.4, 'sine', .12)) },
-  };
-  ((packs[$('#pack').value] || packs.blob)[ev] || (() => {}))();
-}
-async function cue(moment, synth) { const d = await playBite(moment).catch(() => 0); if (!d && synth) sfx(synth); return d || 0.6; }
-
-/* ---------- Desktop bridge (menu-bar countdown + notifications in the Mac app) ---------- */
-const tauri = window.__TAURI__;
-function syncDesktop() {
-  if (!tauri) return;
-  const b = items[idx], nx = items[idx + 1];
-  tauri.core.invoke('sync_timer', {
-    running: !!(running && b), remainingS: Math.max(0, remaining) / speed,
-    label: b ? (KIND_LABEL[b.kind] || 'Blob') : '',
-    nextTitle: nx ? nx.name : 'All blobs cleared',
-    nextBody: nx ? (customLine(MOMENT_OF[nx.kind] || 'start', nx.name) || `${KIND_LABEL[nx.kind]} · ${nx.dur} min`) : (customLine('done') || 'Nice work today.'),
-  }).catch(() => {});
-}
-
-/* ---------- Projects ---------- */
-function renderProjects() {
-  const tb = $('#projects'); tb.innerHTML = '';
-  projects.forEach((p, i) => {
-    const tr = document.createElement('tr'), c = projectColors(p);
-    tr.innerHTML = `<td><span class="chip-dot" style="--a:${c[0]};--b:${c[1] || c[0]}"></span></td>
-      <td><input aria-label="Project name"></td>
-      <td><select aria-label="Type"><option value="work">Work</option><option value="personal">Personal</option></select></td>
-      <td><input type="date" aria-label="Due date"></td><td><input type="number" min="0" step="0.5" aria-label="Hours left"></td>
-      <td><button class="x" aria-label="Remove project">✕</button></td>`;
-    const [n, d, h] = tr.querySelectorAll('input'), sel = tr.querySelector('select');
-    n.value = p.name; d.value = p.due; h.value = p.hours; sel.value = p.cat;
-    n.oninput = e => { p.name = e.target.value; items.forEach(it => { if (it.proj === p.id) it.name = p.name; }); saveProjects(); saveDay(); renderAll(); };
-    d.onchange = e => { p.due = e.target.value; changed(); };
-    h.oninput = e => { p.hours = +e.target.value; changed(); };
-    sel.onchange = e => { p.cat = e.target.value; delete p.color; changed(); renderProjects(); };
-    tr.querySelector('.x').onclick = () => { projects.splice(i, 1); changed(); renderProjects(); };
-    tr.querySelector('.chip-dot').onclick = () => { const pal = PALETTE[p.cat]; const cur = pal.findIndex(x => x.join() === projectColors(p).join()); p.color = (cur + 1) % pal.length; saveProjects(); renderProjects(); renderAll(); };
-    tb.appendChild(tr);
-  });
-}
-function changed() { saveProjects(); rebuild(); }
-$('#add').onclick = () => { projects.push({ id: uid(), name: 'New project', due: isoIn(7), hours: 5, cat: 'work' }); changed(); renderProjects(); };
-
-/* ---------- Calendar import ---------- */
-function parseICS(text) {
-  const out = [], today = new Date(); today.setHours(0, 0, 0, 0);
-  const lines = text.replace(/\r?\n[ \t]/g, '').split(/\r?\n/);
-  let ev = null;
-  const parseDate = (prop, val) => {
-    if (/VALUE=DATE(?!-)/.test(prop) || /^\d{8}$/.test(val)) return null;       // all-day: skip
-    const m = val.match(/(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})(Z?)/); if (!m) return null;
-    const [, Y, Mo, D, h, mi, s, z] = m;
-    return z ? new Date(Date.UTC(+Y, +Mo - 1, +D, +h, +mi, +s)) : new Date(+Y, +Mo - 1, +D, +h, +mi, +s);
-  };
-  for (const ln of lines) {
-    if (ln === 'BEGIN:VEVENT') ev = {};
-    else if (ln === 'END:VEVENT') { if (ev && ev.s && ev.e) out.push(ev); ev = null; }
-    else if (ev) {
-      const i = ln.indexOf(':'), prop = ln.slice(0, i), val = ln.slice(i + 1);
-      if (prop.startsWith('DTSTART')) ev.s = parseDate(prop, val);
-      else if (prop.startsWith('DTEND')) ev.e = parseDate(prop, val);
-      else if (prop === 'SUMMARY') ev.title = val.replace(/\\,/g, ',').replace(/\\n/g, ' ');
-      else if (prop === 'STATUS' && val === 'CANCELLED') ev.cancel = true;
-    }
+  /* ---------- desktop bridge: menu-bar countdown + notification in the Mac app ---------- */
+  function syncDesktop() {
+    if (!tauri) return;
+    const act = timer && session(timer.id), nx = upcoming().find(x => !act || x.id !== act.id);
+    const line = (m, p) => (window.customLine && customLine(m, p)) || '';
+    tauri.core.invoke('sync_timer', {
+      running: !!(act && timer.running), remainingS: act ? Math.max(0, (timer.running ? timer.endsAt - now() : timer.left) / 1000) / clock.speed : 0,
+      label: act ? act.title.slice(0, 18) : '',
+      nextTitle: act ? `Time's up: ${act.title}` : 'BLOB',
+      nextBody: line('end', act && act.title) || (nx ? `Next: ${nx.title} at ${clk(nx.start)}` : 'Nothing else on the string.'),
+    }).catch(() => {});
   }
-  return out.filter(e => !e.cancel && e.s >= today && e.s < new Date(+today + 864e5)).map(e => ({
-    id: uid(), title: e.title || 'Event', start: e.s.getHours() * 60 + e.s.getMinutes(), end: Math.min(24 * 60, Math.round((e.e - today) / 6e4)),
-    cat: /gym|doctor|dentist|lunch with|dinner|family|kids|personal|workout|run\b|yoga/i.test(e.title || '') ? 'personal' : 'work',
-  }));
-}
-function setEvents(list, msg) { events = list; saveEvents(); renderEvents(); rebuild(); $('#calMsg').textContent = msg; }
-function renderEvents() {
-  $('#eventList').innerHTML = events.length ? events.map(e => `<li><span class="chip-dot" style="--a:${(e.cat === 'personal' ? FIXED.personalEvent : FIXED.meeting).join(';--b:')}"></span>${fmtClock(e.start)}–${fmtClock(e.end)} · ${esc(e.title)}
-    <button class="small" data-flip="${e.id}">${e.cat === 'personal' ? 'Personal' : 'Work'}</button></li>`).join('') : '<li class="note">No calendar events for today yet.</li>';
-}
-$('#eventList').addEventListener('click', e => { const id = e.target.dataset.flip; if (!id) return; const ev = events.find(x => x.id === id); ev.cat = ev.cat === 'personal' ? 'work' : 'personal'; saveEvents(); renderEvents(); rebuild(); });
-$('#icsFile').onchange = async e => {
-  const f = e.target.files[0]; if (!f) return;
-  const list = parseICS(await f.text()); setEvents(list, list.length ? `Added ${list.length} event${list.length > 1 ? 's' : ''} from ${f.name}.` : `No timed events today in ${f.name}.`); e.target.value = '';
-};
-$('#icsUrlGo').onclick = async () => {
-  const url = $('#icsUrl').value.trim(); if (!url) return;
-  store.set('blobs.icsUrl', url); $('#calMsg').textContent = 'Fetching your calendar…';
-  try {
-    const text = tauri?.core ? await tauri.core.invoke('fetch_text', { url }) : await (await fetch(url)).text();
-    const list = parseICS(text); setEvents(list, `Synced ${list.length} event${list.length === 1 ? '' : 's'} for today.`);
-  } catch (err) { $('#calMsg').textContent = tauri ? "Couldn't reach that calendar link. Check it's the secret iCal address." : 'Browsers block calendar links from other sites. In the Mac app this syncs directly; here, download the .ics and use "Import .ics" instead.'; }
-};
-$('#icsUrl').value = store.get('blobs.icsUrl', '');
-$('#sampleDay').onclick = () => setEvents([
-  { id: uid(), title: 'Label check-in call', start: toMin('11:30'), end: toMin('12:00'), cat: 'work' },
-  { id: uid(), title: 'Gym', start: toMin('16:00'), end: toMin('17:00'), cat: 'personal' },
-], 'Added two example events. Import your own calendar to replace them.');
-$('#clearCal').onclick = () => setEvents([], 'Calendar events cleared.');
 
-/* ---------- Wire up ---------- */
-function renderAll() { paintBig(); renderBig(); if (!$('#tray').hidden) renderTray(); renderLegend(); }
-function renderLegend() {
-  const sw = (c, label) => `<span class="leg"><span class="chip-dot" style="--a:${c[0]};--b:${c[1] || c[0]}"></span>${esc(label)}</span>`;
-  $('#legend').innerHTML = projects.filter(p => p.name).map(p => sw(projectColors(p), p.name)).join('') +
-    sw(FIXED.meeting, 'Meetings') + sw(FIXED.personalEvent, 'Personal events') + sw(FIXED.snack, 'Snack') + sw(FIXED.chill, 'Chill') + sw(FIXED.meal, 'Meal');
-}
-$('#big').addEventListener('click', () => toggleTray());
-$('#big').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleTray(); } });
-$('#trayClose').onclick = () => toggleTray(false);
-$('#addBlob').onclick = () => openEdit(null);
-$('#shuffle').onclick = shuffleDay;
-$('#replan').onclick = () => { rebuild(); nodes.forEach(el => el._jelly.jiggle(1)); };
-$('#go').onclick = () => {
-  if (!started) {
-    if (finished || !items.length) { finished = false; items = buildDay(); }
-    if (!items.length) return;
-    finished = false; started = true; running = true; lastTick = Date.now();
-    items[0].start = Math.min(items[0].start, Math.round(nowMin())); reflow();
-    enter(0); $('#go').textContent = 'Pause'; saveDay(); return;
-  }
-  running = !running; lastTick = Date.now(); $('#go').textContent = running ? 'Pause' : 'Resume'; syncDesktop();
-};
-$('#skip').onclick = () => { if (!started) return; cue('end', 'end'); enter(idx + 1, Math.max(0.7, clipLens.end || 0)); };
-$('#plus').onclick = () => { const b = items[idx]; if (!b || finished) return; remaining += 300; b.dur += 5; reflow(); saveDay(); renderAll(); syncDesktop(); big.jiggle(0.5); };
-$('#checkin').onclick = checkIn;
-$('#speed').onclick = e => { speed = speed === 1 ? 60 : 1; e.target.textContent = `Demo speed: ${speed === 1 ? 'off' : '60×'}`; e.target.setAttribute('aria-pressed', String(speed !== 1)); syncDesktop(); };
-['#dayStart', '#dayEnd', '#focus', '#snack', '#meal'].forEach(s => $(s).addEventListener('change', () => { saveSettings(); rebuild(); }));
-$('#pack').onchange = () => { saveSettings(); sfx('start'); };
-$$('[data-snd]').forEach(b => b.onclick = () => sfx(b.dataset.snd));
-setupSounds((what, m) => { if (what === 'play') cue(m, { start: 'start', warn: 'warn', end: 'end', break: 'start', update: 'tick', done: 'done' }[m]); });
-
-renderProjects(); renderEvents(); renderAll();
-$('#dateLine').textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
-setInterval(tick, 250);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+  /* ---------- go ---------- */
+  render();
+  requestAnimationFrame(frame);
+  setTimeout(jumpNow, 400);
+  setInterval(tick, 250);
+  setInterval(() => { save(); render(); }, 30000);
+  window.__blob = { get state() { return state; }, now, setNow, render, handleAsk }; // for tests and the console
+})();

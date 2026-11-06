@@ -25,6 +25,7 @@
     maxFill: 0.7,            // share of free time the engine may plan on its own
     sessionLen: 60,          // default deadline session length (a commitment, not an estimate)
     horizonDays: 14,
+    workDays: [1, 2, 3, 4, 5], // Mon–Fri. The engine only picks times on these days; you can still pick any day yourself.
   };
 
   /* ---------- time helpers ---------- */
@@ -60,7 +61,8 @@
   }
   const clone = s => ({ prefs: s.prefs, events: s.events.map(e => ({ ...e })), sessions: s.sessions.map(x => ({ ...x })), deadlines: s.deadlines.map(d => ({ ...d })) });
 
-  const lunchBlock = (s, day) => s.prefs.lunch && s.prefs.lunch.dur ? { id: `lunch-${day}`, kind: 'meal', title: 'Lunch', cat: 'meal', start: at(day, s.prefs.lunch.start), dur: s.prefs.lunch.dur, fixed: true } : null;
+  const isWorkDay = (s, day) => !s.prefs.workDays || s.prefs.workDays.includes(new Date(day).getDay());
+  const lunchBlock = (s, day) => s.prefs.lunch && s.prefs.lunch.dur && isWorkDay(s, day) ? { id: `lunch-${day}`, kind: 'meal', title: 'Lunch', cat: 'meal', start: at(day, s.prefs.lunch.start), dur: s.prefs.lunch.dur, fixed: true } : null;
   const isLive = x => x.status === 'planned' || x.status === 'active';
 
   /* Fixed things on a day: calendar events, protected time and lunch. */
@@ -111,11 +113,22 @@
     for (let i = 0; i < s.prefs.horizonDays; i++) {
       const day = addDays(first, i);
       if (day >= until) break;
-      if (skipDays.has(day)) continue;
+      if (skipDays.has(day) || !isWorkDay(s, day)) continue;
       const t = slotOnDay(s, day, dur, { from, exclude, cap });
       if (t != null && t + dur * MIN <= until) return t;
     }
     return null;
+  }
+
+  /* The free start on `day` closest to `target` (earlier or later), not before `notBefore`. */
+  function nearestOnDay(s, day, dur, target, { exclude = new Set(), notBefore = 0 } = {}) {
+    const w0 = Math.max(at(day, s.prefs.dayStart), ceil5(notBefore)), w1 = at(day, s.prefs.dayEnd);
+    let best = null;
+    for (let c = w0; c + dur * MIN <= w1; c += 5 * MIN) {
+      if (slotOnDay(s, day, dur, { from: c, exclude, cap: false }) !== c) continue;
+      if (best == null || Math.abs(c - target) < Math.abs(best - target)) best = c;
+    }
+    return best;
   }
 
   /* ---------- proposals ---------- */
@@ -131,9 +144,9 @@
       const t = session.start, day = dayOf(t);
       const ok = slotOnDay(s, day, dur, { from: t, cap: false }) === t;
       if (ok) return proposal('add', `Add “${session.title}” ${when(t, now)}`, `That time is free on your calendar.`, [{ op: 'add', id: session.id, item: { ...session, start: t, status: 'planned' } }]);
-      const alt = findSlot(s, dur, { from: t });
+      const alt = nearestOnDay(s, day, dur, t, { notBefore: now }) ?? findSlot(s, dur, { from: t });
       if (alt == null) return proposal('add', `No room for “${session.title}”`, `Nothing free for ${plural(dur, 'minute')} in the next ${s.prefs.horizonDays} days.`, [], { conflicts: [session.id] });
-      return proposal('add', `Add “${session.title}” ${when(alt, now)}`, `${clock(t)} is taken, so this is the next free ${plural(dur, 'minute')}.`, [{ op: 'add', id: session.id, item: { ...session, start: alt, status: 'planned' } }]);
+      return proposal('add', `Add “${session.title}” ${when(alt, now)}`, `${clock(t)} is taken, so this is the closest free ${plural(dur, 'minute')}.`, [{ op: 'add', id: session.id, item: { ...session, start: alt, status: 'planned' } }]);
     }
     const t = findSlot(s, dur, { from: now });
     if (t == null) return proposal('add', `No room for “${session.title}”`, `Nothing free for ${plural(dur, 'minute')} in the next ${s.prefs.horizonDays} days without overfilling your days.`, [], { conflicts: [session.id] });
@@ -146,7 +159,7 @@
     const len = d.sessionLen || s.prefs.sessionLen, want = Math.max(1, d.sessions || 1);
     const firstDay = dayOf(now), lastDay = dayOf(d.due);
     const days = [];
-    for (let day = firstDay; day <= lastDay && days.length < s.prefs.horizonDays; day = addDays(day, 1)) days.push(day);
+    for (let day = firstDay; day <= lastDay && days.length < s.prefs.horizonDays; day = addDays(day, 1)) if (isWorkDay(s, day)) days.push(day);
     // Spread across the available days: pick evenly spaced days, earliest first.
     const picks = [], tried = new Set();
     const order = [];
@@ -190,7 +203,12 @@
     if (target && typeof target === 'object' && target.start != null) {
       const day = dayOf(target.start);
       t = slotOnDay(s, day, x.dur, { from: target.start, exclude: ex, cap: false });
-      why = t === target.start ? `${clock(t)} is free.` : t != null ? `${clock(target.start)} is taken, so this is the next free time that day.` : '';
+      if (t !== target.start) t = nearestOnDay(s, day, x.dur, target.start, { exclude: ex, notBefore: now });
+      why = t === target.start ? `${clock(t)} is free.` : t != null ? `${clock(target.start)} is taken, so this is the closest free time that day.` : '';
+      if (t == null) {
+        t = findSlot(s, x.dur, { from: Math.max(now, target.start), until, exclude: ex, skipDays: skip });
+        why = `Nothing is free around ${clock(target.start)} that day, so this is the next open time after it.`;
+      }
     } else if (target === 'later') {
       t = slotOnDay(s, dayOf(now), x.dur, { from: Math.max(now, end(x)), exclude: ex });
       why = 'This is the next open block later today.';
@@ -216,7 +234,7 @@
     const today = dayOf(from);
     // Sessions that haven't started yet, in order. Lift them all, then put each back at its own
     // time or the next free time after it, so nothing ever moves earlier.
-    const later = staged.sessions.filter(x => isLive(x) && !ex.has(x.id) && dayOf(x.start) === today && x.start >= now).sort((a, b) => a.start - b.start);
+    const later = staged.sessions.filter(x => x.status === 'planned' && !ex.has(x.id) && dayOf(x.start) === today && x.start >= now).sort((a, b) => a.start - b.start);
     later.forEach(x => ex.add(x.id));
     for (const x of later) {
       const dl = x.deadlineId ? staged.deadlines.find(d => d.id === x.deadlineId) : null;

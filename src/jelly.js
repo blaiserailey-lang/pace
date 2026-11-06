@@ -19,11 +19,14 @@
   const rgba = (h, a) => `rgba(${hex(h).join(',')},${a})`;
 
   class Jelly {
-    /* host: element the canvas fills. opts: {colors:[c1,c2?], wobble, seed, points} */
+    /* host: element the canvas fills. opts: {colors:[c1,c2?], wobble, seed, points, glow, radius}
+       glow: neon look for dark backgrounds (outer glow + floor light); the canvas then overhangs the
+       host so the glow isn't clipped. radius: body radius as a share of the host's smaller side. */
     constructor(host, opts = {}) {
       this.host = host;
       this.canvas = document.createElement('canvas');
-      this.canvas.className = 'jelly';
+      this.canvas.className = opts.glow ? 'jelly glow' : 'jelly';
+      this.glow = !!opts.glow; this.radius = opts.radius || 0.43;
       this.canvas.setAttribute('aria-hidden', 'true');
       host.prepend(this.canvas);
       this.g = this.canvas.getContext('2d');
@@ -44,11 +47,12 @@
       blobs.add(this); kick();
     }
     resize() {
-      const r = this.host.getBoundingClientRect(), dpr = Math.min(2, window.devicePixelRatio || 1);
-      this.w = r.width; this.h = r.height;
-      this.canvas.width = Math.max(1, r.width * dpr); this.canvas.height = Math.max(1, r.height * dpr);
+      const hw = this.host.offsetWidth, hh = this.host.offsetHeight, dpr = Math.min(2, window.devicePixelRatio || 1);
+      const k = this.glow ? 1.6 : 1;   // must match the canvas.jelly.glow overhang in CSS
+      this.w = hw * k; this.h = hh * k;
+      this.canvas.width = Math.max(1, this.w * dpr); this.canvas.height = Math.max(1, this.h * dpr);
       this.g.setTransform(dpr, 0, 0, dpr, 0, 0);
-      this.R = Math.min(r.width, r.height) * 0.43;
+      this.R = Math.min(hw, hh) * this.radius;
     }
     setColors(colors) {
       const c = colors.length > 1 ? colors : [colors[0], colors[0]];
@@ -130,9 +134,16 @@
       const g = this.g, R = this.R, [c1, c2] = this.current();
       g.clearRect(0, 0, this.w, this.h);
       const { p, ox, oy } = this.path();
-      // contact shadow
-      g.save(); g.fillStyle = 'rgba(20,24,50,.16)'; g.filter = 'blur(6px)';
-      g.beginPath(); g.ellipse(this.w / 2 + this.cx * 0.5, oy + R * (1 - this.sq) * 0.98, R * 0.78, R * 0.12, 0, 0, Math.PI * 2); g.fill(); g.restore();
+      if (this.glow) {
+        // light pooling on the floor, then a neon halo behind the body
+        g.save(); g.globalAlpha = 0.45 * (this.dim ?? 1); g.fillStyle = c2; g.filter = `blur(${Math.max(4, R * 0.18)}px)`;
+        g.beginPath(); g.ellipse(this.w / 2 + this.cx * 0.5, oy + R * 1.08, R * 0.8, R * 0.13, 0, 0, Math.PI * 2); g.fill(); g.restore();
+        g.save(); g.globalAlpha = 0.55 * (this.dim ?? 1); g.shadowColor = c1; g.shadowBlur = R * 0.55; g.fillStyle = c2; g.fill(p); g.restore();
+      } else {
+        // contact shadow
+        g.save(); g.fillStyle = 'rgba(20,24,50,.16)'; g.filter = 'blur(6px)';
+        g.beginPath(); g.ellipse(this.w / 2 + this.cx * 0.5, oy + R * (1 - this.sq) * 0.98, R * 0.78, R * 0.12, 0, 0, Math.PI * 2); g.fill(); g.restore();
+      }
       // body: the two colours run diagonally, lit from the top-left
       g.save(); g.clip(p);
       const lin = g.createLinearGradient(ox - R, oy - R, ox + R, oy + R);
