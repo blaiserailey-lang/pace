@@ -66,8 +66,13 @@
   const isLive = x => x.status === 'planned' || x.status === 'active';
 
   /* Fixed things on a day: calendar events, protected time and lunch. */
+  /* The same meeting can arrive from more than one place: two connected Google accounts that were
+     both invited, or a Google account plus an iCal link to the same calendar. Show it once. */
+  const eventKey = e => `${String(e.title || '').trim().toLowerCase()}|${e.start}|${end(e)}`;
   function anchors(s, day) {
-    const out = s.events.filter(e => overlaps(e.start, end(e), day, day + DAY));
+    const seen = new Set();
+    const out = s.events.filter(e => overlaps(e.start, end(e), day, day + DAY))
+      .filter(e => { const k = eventKey(e); if (seen.has(k)) return false; seen.add(k); return true; });
     const l = lunchBlock(s, day);
     if (l && !out.some(e => overlaps(e.start, end(e), l.start, end(l)))) out.push(l);
     return out.sort((a, b) => a.start - b.start);

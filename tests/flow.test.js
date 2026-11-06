@@ -168,3 +168,13 @@ test('asking for a taken time offers the closest free time, earlier or later', (
   const p = E.proposeMove(s, 'w', { start: t(0, '13:45') }, NOW);
   assert.equal(p.changes[0].to, t(0, '13:30'));
 });
+
+test('the same meeting from two calendars shows as one blob', () => {
+  const s = E.createState({ events: [
+    { id: 'g-1', title: 'Team sync', start: t(0, '11:00'), dur: 30, source: 'Google: google' },
+    { id: 'ics-1', title: 'team sync ', start: t(0, '11:00'), dur: 30, source: 'Link: l1' },
+    { id: 'g-2', title: 'Team sync', start: t(0, '15:00'), dur: 30, source: 'Google: google' },
+  ] });
+  const ids = E.dayFlow(s, t(0, '00:00')).filter(x => x.fixed && !x.id.startsWith('lunch')).map(x => x.id);
+  assert.deepEqual(ids, ['g-1', 'g-2']);
+});
