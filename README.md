@@ -29,7 +29,28 @@ All planning lives in `src/engine/flow.js`, a deterministic engine with unit tes
 
 ## Sample data
 
-Until Google sign-in lands, BLOB opens on a labeled sample day with a demo clock that starts at 9:20am. The calendar, inbox and tasks are made up. In Settings you can switch to the real clock, import an `.ics` file, or paste Google Calendar's secret iCal link (live sync works in the Mac app).
+Until you connect a calendar, BLOB opens on a labeled sample day with a demo clock that starts at 9:20am. The calendar, inbox and tasks are made up. Connecting Google Calendar replaces the sample calendar and switches to the real clock. "Remove sample tasks" in Settings clears the rest.
+
+## Connections (Mac app)
+
+BLOB signs in with **your own** Google and Spotify developer apps, so your data only goes between your Mac and those services. Sign-in opens your browser and returns to `http://127.0.0.1:53682/callback`. Refresh tokens are kept in the macOS Keychain.
+
+**Google Calendar (read-only)**
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Google Calendar API**.
+2. Under **Google Auth Platform** (OAuth consent screen), choose External, fill in the app name, add yourself as a **test user**, and add the scope `.../auth/calendar.readonly`.
+3. Under **Clients**, create an OAuth client of type **Desktop app**. Copy its client ID and client secret.
+4. In BLOB, open Settings → Google Calendar, paste both, and press **Connect**.
+
+BLOB reads the calendars you have switched on in Google Calendar, for the next 7 days, every 5 minutes. All-day events, events marked "free", and events you declined are skipped.
+
+**Spotify (Premium needed for playback control)**
+
+1. At [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), create an app. Set the redirect URI to `http://127.0.0.1:53682/callback` and tick **Web API**.
+2. Under **User management**, add your Spotify account's email.
+3. In BLOB, open Settings → Spotify, paste the client ID, press **Connect**, then pick a playlist for each kind of blob.
+
+When a blob's timer starts, BLOB plays that kind's playlist on your active Spotify device, and pauses when the timer pauses or ends.
 
 ## Get the app
 
