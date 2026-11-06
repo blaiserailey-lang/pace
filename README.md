@@ -52,9 +52,15 @@ Any calendar with an iCal link (Google's secret address, Outlook, iCloud, a shar
 
 1. At [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard), create an app. Set the redirect URI to `http://127.0.0.1:53682/callback` and tick **Web API**.
 2. Under **User management**, add your Spotify account's email.
-3. In BLOB, open Settings → Spotify, paste the client ID, press **Connect**, then pick a playlist for each kind of blob.
+3. In BLOB, open Settings → Spotify, paste the client ID and press **Connect**. If you connected before this version, disconnect and connect again so BLOB can see what's playing.
 
-When a blob's timer starts, BLOB plays that kind's playlist on your active Spotify device, and pauses when the timer pauses or ends.
+The music blob at the top of the stage shows what's playing on your Spotify (any device) with play/pause, previous and next. Its ♪ button opens **What plays when**:
+
+- **For each kind of blob**: one of your playlists, Liked Songs, an artist's radio (type the artist's name in the search box), "Keep what's playing", or "Silence". Meetings start as Silence.
+- **Just this blob**: give one blob its own music.
+- **Rules**: start music with the timer, pause it with the timer, pause or keep playing at time's up, leave alone music you put on yourself, and shuffle.
+
+The timer only ever pauses music BLOB started, and the music buttons never touch the timer. Seeing what's playing works on any account; playing, pausing and skipping need Premium. Spotify no longer lets new apps open its own radio playlists, so artist radio plays the artist and Spotify's Autoplay continues with similar songs.
 
 ## Get the app
 
