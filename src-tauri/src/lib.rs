@@ -16,6 +16,8 @@ use tauri::{AppHandle, Manager, State, WindowEvent};
 use tauri::RunEvent;
 use tauri_plugin_notification::NotificationExt;
 
+mod oauth;
+
 const TRAY_ID: &str = "pace-tray";
 
 #[derive(Default)]
@@ -141,7 +143,15 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![sync_timer, fetch_text])
+        .manage(oauth::Tokens::default())
+        .invoke_handler(tauri::generate_handler![
+            sync_timer,
+            fetch_text,
+            oauth::oauth_connect,
+            oauth::oauth_status,
+            oauth::oauth_disconnect,
+            oauth::api_request
+        ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show BLOB", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit BLOB", true, Some("CmdOrCtrl+Q"))?;

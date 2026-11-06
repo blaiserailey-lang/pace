@@ -122,8 +122,21 @@
     <button class="ghost" id="sSpeed" aria-pressed="false">Demo speed: off</button>
   </div>
 
-  <h3>Calendar</h3>
-  <p class="note">Google sign-in comes next. Until then, paste your Google Calendar's “secret address in iCal format” (works in the Mac app) or import an .ics file. Your events become fixed blobs; Blob never moves them.</p>
+  <h3>Google Calendar</h3>
+  <div id="gBox" class="conn">
+    <p class="note">Read-only. Your events become fixed blobs that Blob never moves, and it re-checks every 5 minutes. Uses your own Google Cloud “Desktop app” OAuth client (setup steps are in the README).</p>
+    <div class="grid">
+      <label>Client ID<input id="gId" autocomplete="off" spellcheck="false"></label>
+      <label>Client secret<input id="gSecret" type="password" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="primary" id="gConnect">Connect Google Calendar</button>
+      <button class="ghost" id="gSync" hidden>Sync now</button>
+      <button class="ghost danger" id="gDisconnect" hidden>Disconnect</button>
+      <span class="note" id="gMsg" style="margin:0"></span>
+    </div>
+  </div>
+  <p class="note">Or without signing in: paste your calendar's “secret address in iCal format”, or import an .ics file.</p>
   <div class="row">
     <input id="icsUrl" class="grow" placeholder="https://calendar.google.com/calendar/ical/…/basic.ics" aria-label="Calendar link">
     <button class="ghost" id="icsUrlGo">Sync link</button>
@@ -131,6 +144,21 @@
     <input id="icsFile" type="file" accept=".ics,text/calendar" class="sr-only">
   </div>
   <p class="note" id="calMsg"></p>
+
+  <h3>Spotify</h3>
+  <div id="spBox" class="conn">
+    <p class="note">Plays the playlist you pick for each kind of blob when its timer starts, and pauses when the timer pauses or ends. Needs Spotify Premium and your own Spotify app's client ID (README).</p>
+    <div class="row">
+      <input id="spId" class="grow" placeholder="Spotify client ID" autocomplete="off" spellcheck="false" aria-label="Spotify client ID">
+      <button class="primary" id="spConnect">Connect Spotify</button>
+      <button class="ghost danger" id="spDisconnect" hidden>Disconnect</button>
+      <span class="note" id="spMsg" style="margin:0"></span>
+    </div>
+    <div id="spMap" hidden>
+      <label class="check" style="margin-top:10px"><input type="checkbox" id="spOn"> Play music with the timer</label>
+      <div class="grid" id="spPicks"></div>
+    </div>
+  </div>
 
   <h3>Sounds</h3>
   <div class="row">
@@ -146,7 +174,7 @@
   </details>
 
   <h3>Sample data</h3>
-  <div class="row"><button class="ghost danger" id="resetSample">Reset to the sample day</button></div>
+  <div class="row"><button class="ghost" id="clearSample">Remove sample tasks and deadline</button><button class="ghost danger" id="resetSample">Reset to the sample day</button></div>
 </dialog>
 
 <dialog id="trimDlg" aria-labelledby="trimTitle">
@@ -172,6 +200,7 @@
 <script src="engine/flow.js"></script>
 <script src="jelly.js"></script>
 <script src="sounds.js"></script>
+<script src="integrations.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

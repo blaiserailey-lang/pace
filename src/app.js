@@ -306,6 +306,7 @@
     state = E.apply(state, { changes: [...(moved ? [{ op: 'move', id, from: x.start, to: at }] : []), { op: 'status', id, to: 'active' }] });
     timer = { id, total: x.dur * MIN, endsAt: n + x.dur * MIN, left: x.dur * MIN, running: true, warned: false };
     saveTimer(); save(); cue('start', 'start'); brainJelly.jiggle(1.2); closeCard(); render(); syncDesktop();
+    music.forBlob(x.cat);
     if (moved) setTimeout(() => scrollToX((nodes.get(id)?.tx || 0) - track.clientWidth * 0.3), 80);
     const p = E.proposeRunningLate(state, 0, n);
     if (p.changes.length) {
@@ -318,8 +319,8 @@
   }
   function togglePause() {
     if (!timer) return;
-    if (timer.running) { timer.left = timer.endsAt - now(); timer.running = false; }
-    else { timer.endsAt = now() + timer.left; timer.running = true; }
+    if (timer.running) { timer.left = timer.endsAt - now(); timer.running = false; music.pause(); }
+    else { timer.endsAt = now() + timer.left; timer.running = true; music.resume(); }
     saveTimer(); renderBrain(); syncDesktop();
   }
   function finishActive(id = timer && timer.id) {
@@ -327,7 +328,7 @@
     const n = nodes.get(id);
     if (n) n.jelly.pop();
     state = E.apply(state, { changes: [{ op: 'status', id, to: 'done' }] });
-    if (timer && timer.id === id) timer = null;
+    if (timer && timer.id === id) { timer = null; music.pause(); }
     saveTimer(); save(); cue(upcoming().some(x => x.kind === 'session') ? 'end' : 'done', upcoming().length ? 'tick' : 'done');
     closeCard(); setTimeout(render, 120); brainJelly.jiggle(1.5); syncDesktop();
   }
@@ -338,7 +339,7 @@
     if (timer && timer.running) {
       const left = timer.endsAt - n;
       if (!timer.warned && left <= 2 * MIN && timer.total > 4 * MIN) { timer.warned = true; cue('warn', 'warn'); saveTimer(); }
-      if (left <= 0) { timer.left = 0; timer.running = false; saveTimer(); cue('end', 'end'); brainJelly.jiggle(2); showTimeUp(timer.id); syncDesktop(); }
+      if (left <= 0) { timer.left = 0; timer.running = false; saveTimer(); cue('end', 'end'); brainJelly.jiggle(2); showTimeUp(timer.id); syncDesktop(); music.pause(); }
     }
     // A session whose time passed without being started: offer a new time (once).
     if (!ui.card) {
@@ -471,7 +472,7 @@
       const p = E.proposeTimeUp(state, id, choice, now());
       if (choice.startsWith('extend')) {
         const add = (p.changes[0].to - p.changes[0].from) * MIN;
-        p.after = () => { timer = { ...timer, total: timer.total + add, endsAt: now() + add, left: add, running: true, warned: false }; saveTimer(); renderBrain(); syncDesktop(); };
+        p.after = () => { timer = { ...timer, total: timer.total + add, endsAt: now() + add, left: add, running: true, warned: false }; saveTimer(); renderBrain(); syncDesktop(); music.resume(); };
         if (p.changes.length === 1) return approve(p);   // nothing else moves: no need to ask
       } else {
         p.after = () => { timer = null; saveTimer(); renderBrain(); };
@@ -622,6 +623,8 @@
     $('#sStart').value = hm(p.dayStart); $('#sEnd').value = hm(p.dayEnd); $('#sLunch').value = hm(p.lunch.start); $('#sBuffer').value = String(p.buffer);
     $('#sReal').checked = clock.real; $('#pack').value = store.get('blob.pack', 'blob');
     $('#icsUrl').value = store.get('blob.icsUrl', '');
+    $('#gId').value = conn.gId; $('#gSecret').value = conn.gSecret; $('#spId').value = conn.spId;
+    refreshConnections();
   }
   $('#openSettings').onclick = () => { fillSettings(); $('#settingsDlg').showModal(); };
   const setPrefs = patch => { state = { ...state, prefs: { ...state.prefs, ...patch } }; save(); render(); };
@@ -667,19 +670,31 @@
       cat: /gym|workout|run\b|yoga|doctor|dentist|family|kids|personal/i.test(e.title || '') ? 'fitness' : /lunch|dinner|breakfast|coffee/i.test(e.title || '') ? 'meal' : 'meeting',
     }));
   }
-  function importEvents(list, label) {
-    // Real calendar replaces the sample one. Sessions it overlaps get new-time suggestions, not silent moves.
-    let staged = { ...state, events: state.events.filter(e => e.source !== 'Sample calendar' && e.source !== 'Your calendar') };
-    const changes = [];
-    for (const ev of list) { const p = E.proposeCalendarChange(staged, ev, now()); staged = E.apply(staged, p); changes.push(...p.changes); }
-    state = { ...state, events: staged.events.filter(e => e.source !== 'Your calendar') };
-    const moves = changes.filter(c => c.op !== 'event');
-    const p = { kind: 'calendar', summary: `${label}: ${list.length} event${list.length === 1 ? '' : 's'} in the next ${VISIBLE_DAYS} days`, reason: moves.length ? `${moves.filter(c => c.op === 'move').length} of your blobs overlap them and get the next open time.` : 'None of your blobs overlap them.', changes, conflicts: [] };
-    $('#calMsg').textContent = `Found ${list.length} event${list.length === 1 ? '' : 's'}. Approve the suggestion to add them.`;
-    $('#settingsDlg').close();
-    p.after = () => { state.sample = false; save(); render(); };
-    showProposal(p);
+  /* Calendar events are facts, so they go straight onto the string. Your flexible blobs that they now
+     overlap get new-time suggestions you approve; nothing of yours moves silently. A real calendar
+     replaces the sample one. */
+  function syncEvents(list, source, label, { quiet = false } = {}) {
+    const key = e => `${e.title}|${e.start}|${e.dur}`;
+    const old = new Map(state.events.filter(e => e.source === source).map(e => [e.id, e]));
+    const changed = list.filter(e => !old.has(e.id) || key(old.get(e.id)) !== key(e));
+    const removed = [...old.keys()].filter(id => !list.some(e => e.id === id)).length;
+    const changedIds = new Set(changed.map(e => e.id));
+    let staged = { ...state, events: state.events.filter(e => e.source !== source && e.source !== 'Sample calendar').concat(list.filter(e => !changedIds.has(e.id))) };
+    const moves = [];
+    for (const ev of changed) { const p = E.proposeCalendarChange(staged, ev, now()); staged = E.apply(staged, p); moves.push(...p.changes.filter(c => c.op !== 'event')); }
+    const hadSample = state.events.some(e => e.source === 'Sample calendar');
+    state = { ...state, events: staged.events };
+    if (hadSample) state.sample = state.sessions.some(x => /^Sample/.test(x.source || ''));
+    save(); render();
+    const what = `${label}: ${changed.length ? `${changed.length} new or changed` : 'no changes'}${removed ? `, ${removed} removed` : ''}`;
+    $('#calMsg').textContent = `${what}. ${list.length} event${list.length === 1 ? '' : 's'} in the next ${VISIBLE_DAYS} days.`;
+    const n = moves.filter(c => c.op === 'move' || c.op === 'unplace').length;
+    if (n) {
+      if ($('#settingsDlg').open) $('#settingsDlg').close();
+      showProposal({ kind: 'calendar', summary: `${label} changed: move ${n} blob${n === 1 ? '' : 's'}?`, reason: `${what}. ${n === 1 ? 'One of your blobs overlaps' : 'Some of your blobs overlap'} the new times, so here are the next open slots. Calendar events stay where they are.`, changes: moves, conflicts: [] });
+    } else if (!quiet) reply(`${esc(what)}. None of your blobs overlap, so nothing else changes.`);
   }
+  const importEvents = (list, label) => syncEvents(list, 'Your calendar', label);
   $('#icsFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; importEvents(parseICS(await f.text()), f.name); e.target.value = ''; };
   const tauri = window.__TAURI__;
   $('#icsUrlGo').onclick = async () => {
@@ -690,6 +705,93 @@
       importEvents(parseICS(text), 'Your calendar');
     } catch (err) { $('#calMsg').textContent = tauri ? "Couldn't reach that calendar link. Check it's the secret iCal address." : 'Browsers block calendar links from other sites. In the Mac app this syncs directly; here, download the .ics and import it.'; }
   };
+
+  /* ---------- connections: Google Calendar and Spotify (Mac app only) ---------- */
+  const Links = window.BlobLinks;
+  const conn = store.get('blob.conn', { gId: '', gSecret: '', spId: '' });
+  const saveConn = () => store.set('blob.conn', conn);
+  const music = (() => {
+    const cfg = store.get('blob.music', { on: false, map: {} });
+    let linked = false, current = null;
+    const say = e => reply(esc(e.message || String(e)));
+    return {
+      cfg, save: () => store.set('blob.music', cfg),
+      set linked(v) { linked = v; }, get linked() { return linked; },
+      forBlob(cat) {
+        if (!linked || !cfg.on) return;
+        const uri = cfg.map[cat];
+        if (!uri) { if (current) { Links.pause(); current = null; } return; }
+        current = uri; Links.play(uri).catch(say);
+      },
+      pause() { if (linked && cfg.on && current) Links.pause(); },
+      resume() { if (linked && cfg.on && current) Links.play(null).catch(say); },
+    };
+  })();
+  let calTimer = 0;
+  async function googleSync(quiet) {
+    const from = E.dayOf(Date.now()), to = E.addDays(from, VISIBLE_DAYS);
+    $('#gMsg').textContent = 'Syncing…';
+    try {
+      const list = await Links.calendarEvents(from, to);
+      $('#gMsg').textContent = `Synced ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+      syncEvents(list, 'Google Calendar', 'Google Calendar', { quiet });
+    } catch (e) { $('#gMsg').textContent = `Sync failed: ${String(e).slice(0, 140)}`; }
+  }
+  async function refreshConnections(announce = false) {
+    if (!Links || !Links.available) {
+      $$('.conn').forEach(b => b.classList.add('off'));
+      $('#gMsg').textContent = $('#spMsg').textContent = 'Works in the Mac app.';
+      $('#gConnect').disabled = $('#spConnect').disabled = true;
+      return;
+    }
+    const [g, sp] = await Promise.all([Links.status('google'), Links.status('spotify')]);
+    $('#gConnect').hidden = g; $('#gSync').hidden = $('#gDisconnect').hidden = !g;
+    $('#spConnect').hidden = sp; $('#spDisconnect').hidden = !sp; $('#spMap').hidden = !sp;
+    music.linked = sp;
+    if (g && !calTimer) {
+      // Real clock once a real calendar is in.
+      if (!clock.real) { clock.real = true; store.set('blob.realClock', true); }
+      googleSync(!announce); calTimer = setInterval(() => googleSync(true), 5 * 60000);
+    }
+    if (!g && calTimer) { clearInterval(calTimer); calTimer = 0; }
+    if (sp) renderPicks();
+  }
+  async function renderPicks() {
+    $('#spOn').checked = music.cfg.on;
+    let lists = [];
+    try { lists = await Links.playlists(); } catch (e) { $('#spMsg').textContent = String(e).slice(0, 140); }
+    const opts = '<option value="">No music</option>' + lists.map(l => `<option value="${esc(l.uri)}">${esc(l.name)}</option>`).join('');
+    $('#spPicks').innerHTML = Object.entries(CATS).filter(([k]) => k !== 'meeting').map(([k, v]) => `<label>${esc(v.label)}<select data-cat="${k}">${opts}</select></label>`).join('');
+    $$('#spPicks select').forEach(sel => { sel.value = music.cfg.map[sel.dataset.cat] || ''; sel.onchange = () => { music.cfg.map[sel.dataset.cat] = sel.value; music.save(); }; });
+  }
+  $('#spOn').onchange = e => { music.cfg.on = e.target.checked; music.save(); };
+  $('#gId').oninput = e => { conn.gId = e.target.value.trim(); saveConn(); };
+  $('#gSecret').oninput = e => { conn.gSecret = e.target.value.trim(); saveConn(); };
+  $('#spId').oninput = e => { conn.spId = e.target.value.trim(); saveConn(); };
+  $('#gConnect').onclick = async () => {
+    $('#gMsg').textContent = 'Finish signing in in your browser…';
+    try { await Links.connect('google', conn.gId, conn.gSecret); $('#gMsg').textContent = 'Connected.'; await refreshConnections(true); }
+    catch (e) { $('#gMsg').textContent = String(e).slice(0, 160); }
+  };
+  $('#gSync').onclick = () => googleSync(false);
+  $('#gDisconnect').onclick = async () => {
+    await Links.disconnect('google');
+    state = { ...state, events: state.events.filter(e => e.source !== 'Google Calendar') }; save(); render();
+    $('#gMsg').textContent = 'Disconnected. Your Google events are off the string.'; refreshConnections();
+  };
+  $('#spConnect').onclick = async () => {
+    $('#spMsg').textContent = 'Finish signing in in your browser…';
+    try { await Links.connect('spotify', conn.spId); $('#spMsg').textContent = 'Connected. Pick a playlist for each kind of blob.'; music.cfg.on = true; music.save(); await refreshConnections(); }
+    catch (e) { $('#spMsg').textContent = String(e).slice(0, 160); }
+  };
+  $('#spDisconnect').onclick = async () => { await Links.disconnect('spotify'); $('#spMsg').textContent = 'Disconnected.'; refreshConnections(); };
+  $('#clearSample').onclick = () => {
+    const ids = new Set(state.sessions.filter(x => /^Sample/.test(x.source || '')).map(x => x.id));
+    state = { ...state, sessions: state.sessions.filter(x => !ids.has(x.id)), deadlines: state.deadlines.filter(d => d.id !== 'dl-grant'), events: state.events.filter(e => e.source !== 'Sample calendar') };
+    state.sample = false; if (timer && ids.has(timer.id)) { timer = null; saveTimer(); }
+    save(); render();
+  };
+  refreshConnections();
 
   /* ---------- demo scenarios ---------- */
   $$('#chips [data-demo]').forEach(b => b.onclick = () => {

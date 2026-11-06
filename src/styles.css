@@ -145,6 +145,8 @@ dialog h3{font-family:var(--display);font-size:15px;margin:18px 0 6px;color:var(
 .grid input,.grid select,.row select,.grow{background:rgba(255,255,255,.06);border:1px solid var(--line);border-radius:10px;padding:8px 10px;color:var(--ink)}
 select option{background:#12141f}
 .grow{flex:1 1 260px;min-width:0}
+.conn{border:1px solid var(--line);border-radius:14px;padding:10px 12px;margin-bottom:6px}
+.conn.off{opacity:.55}
 .bites summary{cursor:pointer;font-weight:700;margin-top:10px}
 .moments{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:10px;margin-top:10px}
 .moment{border:1px solid var(--line);border-radius:14px;padding:10px;display:grid;gap:6px}
