@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>BLOB — Focus Playground</title>
+  <link rel="stylesheet" href="./prototype/playground.css">
+  <script type="module" src="./prototype/playground.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="wordmark" href="./"><span class="brand-orb" aria-hidden="true"></span>BLOB<span class="wordmark-dot">.</span></a>
+    <span class="top-divider"></span><span class="studio-label">Focus playground</span>
+    <span class="prototype-badge"><i></i> Visual prototype</span>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="heading">
+      <div>
+        <p class="eyebrow"><span></span> THE DAILY FLOW</p>
+        <h1 id="heading">Your timeline<span>.</span></h1>
+        <p class="subtitle">One task at a time. Find your rhythm.</p>
+      </div>
+      <div class="date"><span>FRIDAY</span><strong>November 6</strong></div>
+    </section>
+    <section class="workspace" aria-label="Task timeline">
+      <div class="canvas-label"><span></span> TODAY'S STRING <span class="canvas-count">05 NODES</span></div>
+      <div class="timeline" id="timeline">
+        <elastic-string aria-hidden="true"></elastic-string>
+        <jelly-blob id="inbox" class="node inbox"></jelly-blob>
+        <jelly-blob id="standup" class="node standup"></jelly-blob>
+        <brain-blob id="brain" class="node brain"></brain-blob>
+        <jelly-blob id="review" class="node review"></jelly-blob>
+        <jelly-blob id="wrap" class="node wrap"></jelly-blob>
+      </div>
+      <div class="canvas-footer"><span class="canvas-hint"><span aria-hidden="true">↳</span> Select a task to bring it into focus <button id="reset-focus" type="button" hidden>Return to Deep work</button></span><span class="flow-key"><i></i> IN FOCUS <i></i> ON THE STRING</span></div>
+    </section>
+    <footer class="footer"><span>BUILT FOR A LITTLE MOMENTUM.</span><spotify-capsule></spotify-capsule></footer>
+    <p id="announcement" class="sr-only" role="status"></p>
+  </main>
+</body>
+</html>
