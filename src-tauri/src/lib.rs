@@ -59,6 +59,26 @@ fn sync_timer(
     }
 }
 
+/// Downloads a calendar feed (the "secret address in iCal format") for the web view, which
+/// can't fetch it itself because of browser cross-origin rules.
+#[tauri::command]
+async fn fetch_text(url: String) -> Result<String, String> {
+    let url = url.trim().replacen("webcal://", "https://", 1);
+    if !url.starts_with("https://") {
+        return Err("Only https calendar links are supported".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        ureq::get(&url)
+            .timeout(std::time::Duration::from_secs(20))
+            .call()
+            .map_err(|e| e.to_string())?
+            .into_string()
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 fn fmt(secs: u64) -> String {
     format!("{:02}:{:02}", secs / 60, secs % 60)
 }
@@ -102,7 +122,7 @@ fn start_ticker(app: AppHandle, state: Shared) {
             if text != last_text {
                 if let Some(tray) = app.tray_by_id(TRAY_ID) {
                     let _ = tray.set_title(if text.is_empty() { None } else { Some(text.as_str()) });
-                    let _ = tray.set_tooltip(Some(if text.is_empty() { "Pace" } else { text.as_str() }));
+                    let _ = tray.set_tooltip(Some(if text.is_empty() { "Blobs" } else { text.as_str() }));
                 }
                 last_text = text;
             }
@@ -121,14 +141,14 @@ pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
         .manage(state.clone())
-        .invoke_handler(tauri::generate_handler![sync_timer])
+        .invoke_handler(tauri::generate_handler![sync_timer, fetch_text])
         .setup(move |app| {
-            let show = MenuItem::with_id(app, "show", "Show Pace", true, None::<&str>)?;
-            let quit = MenuItem::with_id(app, "quit", "Quit Pace", true, Some("CmdOrCtrl+Q"))?;
+            let show = MenuItem::with_id(app, "show", "Show Blobs", true, None::<&str>)?;
+            let quit = MenuItem::with_id(app, "quit", "Quit Blobs", true, Some("CmdOrCtrl+Q"))?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
 
             let mut tray = TrayIconBuilder::with_id(TRAY_ID)
-                .tooltip("Pace")
+                .tooltip("Blobs")
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
@@ -167,7 +187,7 @@ pub fn run() {
             }
         })
         .build(tauri::generate_context!())
-        .expect("error while building Pace");
+        .expect("error while building Blobs");
 
     app.run(|app, event| {
         #[cfg(target_os = "macos")]
