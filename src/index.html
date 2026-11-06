@@ -3,151 +3,143 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Pace</title>
+<title>Blobs</title>
 <link rel="stylesheet" href="fonts.css">
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-<div class="wrap" id="app">
+<div class="wrap">
   <header>
     <div>
-      <h1>Pace<span>.</span></h1>
-      <p class="sub">Example projects below, swap in your own</p>
+      <h1>Blobs<span>.</span></h1>
+      <p class="sub" id="dateLine"></p>
     </div>
     <div class="row">
-      <span class="mode-chip"><span class="dot"></span><span id="musicMode">Spotify: Work mix</span></span>
+      <span class="pill" id="count"></span>
+      <span class="pill"><span class="dot"></span><span id="music">Music: Work mix</span></span>
     </div>
   </header>
 
-  <div class="grid">
-    <section class="panel" aria-label="Desk">
-      <div class="desk">
-        <div class="char-wrap">
-          <svg id="char" viewBox="0 0 120 120" aria-hidden="true"></svg>
-          <div id="char3d" hidden aria-label="Your 3D character" role="img"></div>
-          <div class="char-name" id="charName">Pip</div>
-          <div class="bubble" id="say" aria-live="polite">Hey. Ready to run the day?</div>
-        </div>
-        <div class="clock">
-          <div class="ring">
-            <svg viewBox="0 0 100 100" aria-hidden="true">
-              <circle cx="50" cy="50" r="44" fill="none" stroke="var(--track)" stroke-width="7"/>
-              <circle id="arc" cx="50" cy="50" r="44" fill="none" stroke="var(--mode, var(--work))" stroke-width="7" stroke-linecap="round" pathLength="1000" stroke-dasharray="1000" stroke-dashoffset="0"/>
-            </svg>
-            <div class="face">
-              <div class="label" id="blockType">Focus</div>
-              <div id="time" role="timer" aria-live="off">50:00</div>
-              <div id="blockName">Project</div>
-            </div>
-          </div>
-          <div class="next" id="next">Up next: —</div>
-        </div>
+  <main class="hero">
+    <div id="big" class="bigblob" role="button" tabindex="0" aria-expanded="false" aria-controls="tray" aria-label="Current blob. Press to show today's blobs.">
+      <div class="face">
+        <span class="cat" id="bigCat">Focus</span>
+        <strong class="name" id="bigName">Your task</strong>
+        <span class="time" id="time" role="timer" aria-live="off">50:00</span>
+        <span class="next" id="bigNext"></span>
       </div>
-      <div class="controls">
-        <button class="primary" id="go">Start day</button>
-        <button id="skip">Skip block</button>
-        <button id="plus">+5 min</button>
-        <button id="checkin">Check in</button>
-        <button id="speed" aria-pressed="false">Demo speed: off</button>
-      </div>
-      <p class="note" style="text-align:center">Demo speed runs the clock 60× faster so you can watch transitions, sounds, and music switches.</p>
-    </section>
+    </div>
+    <p class="say" id="say" aria-live="polite"></p>
+    <div class="controls">
+      <button class="primary" id="go">Start day</button>
+      <button id="skip">Done, next blob</button>
+      <button id="plus">+5 min</button>
+      <button id="checkin">Check in</button>
+      <button id="speed" aria-pressed="false">Demo speed: off</button>
+    </div>
+    <p class="hint" id="hint">Tap the big blob to see what’s coming up</p>
+  </main>
 
-    <section class="panel" aria-label="Today's plan">
-      <div class="row" style="justify-content:space-between">
-        <h2>Today's run sheet</h2>
-        <span class="label" id="summary"></span>
+  <section id="tray" class="tray" hidden aria-labelledby="trayTitle">
+    <div class="tray-head">
+      <div>
+        <h2 id="trayTitle">Coming up</h2>
+        <span class="label" id="traySum"></span>
       </div>
-      <div class="sheet" id="sheet"></div>
-    </section>
-  </div>
+      <div class="row">
+        <button id="addBlob">Add a blob</button>
+        <button id="shuffle">Shuffle</button>
+        <button id="replan">Re-plan</button>
+        <button id="trayClose" aria-label="Close">Close</button>
+      </div>
+    </div>
+    <p class="note">Drag blobs to rearrange your day. Tap one to edit it. Shuffle mixes things up but keeps calendar events and meals where they are.</p>
+    <div class="blobs" id="blobs" role="list"></div>
+    <div class="legend" id="legend" aria-label="Color key"></div>
+  </section>
 
-  <div class="grid">
+  <details class="setup">
+    <summary><h2>Set up your day</h2><span class="label">Projects, calendar, rhythm, sounds</span></summary>
+
     <section class="panel">
       <div class="row" style="justify-content:space-between">
-        <h2>Projects</h2>
+        <h3>Projects</h3>
         <button id="add">Add project</button>
       </div>
       <div class="tbl">
         <table>
-          <thead><tr><th>Project</th><th>Due</th><th>Hrs left</th><th></th></tr></thead>
+          <thead><tr><th><span class="sr-only">Color</span></th><th>Project</th><th>Type</th><th>Due</th><th>Hrs left</th><th></th></tr></thead>
           <tbody id="projects"></tbody>
         </table>
       </div>
-      <p class="note">Pace works back from each deadline: hours left ÷ days left sets today's share, and blocks rotate so no project gets starved.</p>
+      <p class="note">Blobs works back from each deadline: hours left ÷ days left sets today's share. Work projects get cool colors, personal ones warm colors. Tap a color dot to change it.</p>
     </section>
 
     <section class="panel">
-      <h2>Your rhythm</h2>
+      <h3>Calendar</h3>
+      <p class="note">Calendar events become blobs at their real times, and focus blobs fill the gaps.</p>
+      <div class="row cal-row">
+        <label class="button" for="icsFile">Import .ics</label>
+        <input id="icsFile" type="file" accept=".ics,text/calendar" class="sr-only">
+        <button id="sampleDay">Add example events</button>
+        <button id="clearCal">Clear</button>
+      </div>
+      <div class="row cal-row">
+        <input id="icsUrl" class="grow" placeholder="Google Calendar secret address in iCal format" aria-label="Calendar iCal link">
+        <button id="icsUrlGo">Sync</button>
+      </div>
+      <p class="note" id="calMsg">In Google Calendar: Settings → your calendar → “Secret address in iCal format”.</p>
+      <ul class="events" id="eventList"></ul>
+    </section>
+
+    <section class="panel">
+      <h3>Your rhythm</h3>
       <div class="settings">
         <label for="dayStart">Day starts<input id="dayStart" type="time" value="10:00"></label>
         <label for="dayEnd">Day ends<input id="dayEnd" type="time" value="18:00"></label>
-        <label for="focus">Focus block (min)<input id="focus" type="number" min="15" max="120" value="50"></label>
+        <label for="focus">Focus blob (min)<input id="focus" type="number" min="15" max="120" value="50"></label>
         <label for="snack">Snack break (min)<input id="snack" type="number" min="5" max="30" value="10"></label>
         <label for="meal">Meal at<input id="meal" type="time" value="13:00"></label>
+        <label for="pack">Sounds
+          <select id="pack"><option value="blob">Bloop</option><option value="soft">Soft chimes</option><option value="crisp">Crisp beeps</option></select>
+        </label>
       </div>
-      <div class="label" style="margin-top:16px">Sound pack · tap to preview</div>
       <div class="pack">
-        <button data-snd="start">Block start</button>
+        <button data-snd="start">Blob start</button>
         <button data-snd="warn">5-min warning</button>
         <button data-snd="end">Time's up</button>
         <button data-snd="done">Day complete</button>
       </div>
-      <p class="note">Each personality has its own sounds. Add your own clips under Sound bites below. Spotify playback is coming next.</p>
     </section>
-  </div>
 
-  <section class="panel" aria-labelledby="charTitle">
-    <div class="row" style="justify-content:space-between">
-      <h2 id="charTitle">Your character</h2>
-      <div class="row">
-        <button id="charRandom">Surprise me</button>
-        <button id="charReset">Reset</button>
-      </div>
-    </div>
-    <div class="editor">
-      <div class="preview">
-        <svg id="charPreview" viewBox="0 0 120 120" role="img" aria-label="Character preview"></svg>
-      </div>
-      <div class="settings editor-fields">
-        <label for="cName">Name<input id="cName" maxlength="20" autocomplete="off"></label>
-        <label for="personality">Personality
-          <select id="personality">
-            <option value="coach">Coach</option>
-            <option value="chill">Chill friend</option>
-            <option value="hype">Hype man</option>
-          </select>
-        </label>
-        <label class="drawn-only" for="cShape">Body<select id="cShape"></select></label>
-        <label class="drawn-only" for="cEyes">Eyes<select id="cEyes"></select></label>
-        <label class="drawn-only" for="cAddon">Add-on<select id="cAddon"></select></label>
-        <div class="field photo-field">
-          <span>Make it from a picture</span>
-          <div class="row">
-            <label class="button" for="cPhoto">Upload a picture</label>
-            <input id="cPhoto" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="sr-only">
-            <button id="cDrawn" hidden>Use the drawn character</button>
-            <span class="note" id="cPhotoStatus" style="margin:0">Pace cuts it out and puffs it into a 3D character.</span>
-          </div>
-        </div>
-        <div class="field drawn-only">
-          <span>Color</span>
-          <div class="swatches" id="cColors" role="radiogroup" aria-label="Color"></div>
-        </div>
-      </div>
-    </div>
-    <p class="note">"Match the block" makes your character change color with focus, breaks, meals and hype. Its face still changes mood either way.</p>
-  </section>
-
-  <section class="panel" aria-labelledby="soundTitle">
-    <h2 id="soundTitle">Sound bites &amp; catchphrases</h2>
-    <p class="note">Give each moment your own clip and lines. Upload any audio or video clip, trim it to the bite, and Pace plays it instead of the built-in sound. Several lines per moment get picked at random.</p>
-    <div class="moments" id="moments"></div>
-  </section>
-
+    <section class="panel">
+      <h3>Sound bites &amp; catchphrases</h3>
+      <p class="note">Give each moment your own clip and lines. Upload any audio or video clip, trim it to the bite, and Blobs plays it instead of the built-in sound. Lines show under the big blob; several per moment get picked at random.</p>
+      <div class="moments" id="moments"></div>
+    </section>
+  </details>
 </div>
-<script src="character.js"></script>
-<script src="sounds.js"></script>
+
+<dialog id="editDlg" aria-labelledby="editTitle">
+  <form id="editForm">
+    <h2 id="editTitle">Edit blob</h2>
+    <div class="settings">
+      <label for="eName" class="wide">What is it?<input id="eName" maxlength="60" required></label>
+      <label for="eKind" class="wide">Type<select id="eKind"></select></label>
+      <label for="eDur">Minutes<input id="eDur" type="number" min="5" max="240" step="5"></label>
+    </div>
+    <div class="row" style="margin-top:14px">
+      <button type="button" id="eEarlier">Earlier</button>
+      <button type="button" id="eLater">Later</button>
+      <button type="button" id="eNow">Do it next</button>
+      <button type="button" id="eDelete" class="danger">Delete</button>
+    </div>
+    <div class="row" style="justify-content:flex-end;margin-top:16px">
+      <button type="button" id="eCancel">Cancel</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
 <dialog id="trimDlg" aria-labelledby="trimTitle">
   <h2 id="trimTitle">Sound bite</h2>
   <p class="note" id="trimMsg"></p>
@@ -167,7 +159,8 @@
     <button id="trimSave" type="button" class="primary">Save bite</button>
   </div>
 </dialog>
+<script src="jelly.js"></script>
+<script src="sounds.js"></script>
 <script src="app.js"></script>
-<script type="module" src="char3d.js"></script>
 </body>
 </html>

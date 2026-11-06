@@ -7,7 +7,6 @@ const MOMENTS = [
   { id: 'warn',   label: '5-minute warning', hint: '' },
   { id: 'end',    label: "Time's up",        hint: '' },
   { id: 'break',  label: 'Break starts',     hint: 'Snack, chill and meal breaks' },
-  { id: 'hype',   label: 'Hype up',          hint: 'After lunch' },
   { id: 'update', label: 'Check-in update',  hint: 'Halfway through focus, or when you press Check in' },
   { id: 'done',   label: 'Day complete',     hint: '' },
 ];
