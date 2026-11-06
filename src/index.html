@@ -49,6 +49,7 @@
     <div class="track" id="track" tabindex="0" aria-label="Your day as a string of blobs. Scroll sideways to pan.">
       <div class="lane" id="lane" role="list"></div>
     </div>
+    <spotify-capsule id="player" class="player"></spotify-capsule>
   </main>
 
   <section class="card" id="card" hidden aria-live="polite"></section>
@@ -153,7 +154,7 @@
 
   <h3>Spotify</h3>
   <div id="spBox" class="conn">
-    <p class="note">Plays the playlist you pick for each kind of blob when its timer starts, and pauses when the timer pauses or ends. Needs Spotify Premium and your own Spotify app's client ID (README).</p>
+    <p class="note">Shows what's playing in the player at the bottom right of BLOB, and plays the music you pick for each kind of blob when its timer starts. Seeing what's playing works on any account; playing, pausing and skipping need Spotify Premium. Uses your own Spotify app's client ID (README).</p>
     <div class="row">
       <input id="spId" class="grow" placeholder="Spotify client ID" autocomplete="off" spellcheck="false" aria-label="Spotify client ID">
       <button class="primary" id="spConnect">Connect Spotify</button>
@@ -161,8 +162,7 @@
       <span class="note" id="spMsg" style="margin:0"></span>
     </div>
     <div id="spMap" hidden>
-      <label class="check" style="margin-top:10px"><input type="checkbox" id="spOn"> Play music with the timer</label>
-      <div class="grid" id="spPicks"></div>
+      <button class="ghost" id="spPlan" style="margin-top:10px">What plays when…</button>
     </div>
   </div>
 
@@ -207,9 +207,11 @@
 </dialog>
 
 <script src="engine/flow.js"></script>
+<script src="engine/music.js"></script>
 <script src="jelly.js"></script>
 <script src="sounds.js"></script>
 <script src="integrations.js"></script>
+<script src="spotify-capsule.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

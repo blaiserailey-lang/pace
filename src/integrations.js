@@ -53,13 +53,48 @@
 
     async playlists() {
       const res = await api('spotify', 'GET', 'https://api.spotify.com/v1/me/playlists?limit=50');
-      return (res.items || []).filter(Boolean).map(p => ({ uri: p.uri, name: p.name }));
+      return (res.items || []).filter(Boolean).map(p => ({ uri: p.uri, name: p.name, art: ((p.images || []).slice(-1)[0] || {}).url || '' }));
     },
     async play(uri) {
       try { await api('spotify', 'PUT', 'https://api.spotify.com/v1/me/player/play', uri ? { context_uri: uri } : undefined); }
       catch (e) { throw new Error(/NO_ACTIVE_DEVICE|404/.test(String(e)) ? 'Open Spotify on this Mac (or any device) first, then try again.' : /PREMIUM|403/.test(String(e)) ? 'Spotify only lets apps control playback on Premium accounts.' : String(e)); }
     },
     pause: () => api('spotify', 'PUT', 'https://api.spotify.com/v1/me/player/pause').catch(() => {}),
+
+    /* What's playing on your Spotify right now, or null when nothing is. Works on free accounts too. */
+    async nowPlaying() {
+      const r = await api('spotify', 'GET', 'https://api.spotify.com/v1/me/player?additional_types=episode');
+      if (!r || typeof r !== 'object') return null;
+      const it = r.item || {};
+      const imgs = (it.album && it.album.images) || it.images || [];
+      return {
+        playing: !!r.is_playing,
+        title: it.name || '',
+        artist: (it.artists || []).map(a => a.name).join(', ') || (it.show && it.show.name) || '',
+        art: (imgs.find(i => i.width && i.width <= 300) || imgs[0] || {}).url || '',
+        progress: r.progress_ms || 0, duration: it.duration_ms || 0,
+        contextUri: (r.context && r.context.uri) || '',
+        device: r.device ? r.device.name : '',
+        shuffle: !!r.shuffle_state,
+        at: Date.now(),
+      };
+    },
+    control: async (what) => {
+      const url = { next: 'next', prev: 'previous' }[what];
+      try { await api('spotify', 'POST', `https://api.spotify.com/v1/me/player/${url}`); }
+      catch (e) { throw new Error(/NO_ACTIVE_DEVICE|404/.test(String(e)) ? 'Open Spotify on this Mac (or any device) first, then try again.' : /PREMIUM|403/.test(String(e)) ? 'Spotify only lets apps control playback on Premium accounts.' : String(e)); }
+    },
+    shuffle: on => api('spotify', 'PUT', `https://api.spotify.com/v1/me/player/shuffle?state=${on ? 'true' : 'false'}`).catch(() => {}),
+    /* Artists for "artist radio". */
+    async searchArtists(q) {
+      const res = await api('spotify', 'GET', 'https://api.spotify.com/v1/search?' + qs({ q, type: 'artist', limit: 5 }));
+      return ((res.artists && res.artists.items) || []).filter(Boolean).map(a => ({ uri: a.uri, name: a.name, art: ((a.images || []).slice(-1)[0] || {}).url || '' }));
+    },
+    /* Liked Songs plays as the account's "collection". */
+    async likedSongs() {
+      const me = await api('spotify', 'GET', 'https://api.spotify.com/v1/me');
+      return me && me.id ? { uri: `spotify:user:${me.id}:collection`, name: 'Liked Songs' } : null;
+    },
   };
   window.BlobLinks = Links;
 })();

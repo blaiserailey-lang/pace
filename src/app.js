@@ -80,6 +80,7 @@
   const ui = { selected: null, zoom: store.get('blob.zoom', 1), proposal: null, card: null, missedAsked: new Set() };
   let timer = store.get('blob.timer', null); // {id, endsAt, left, total, running}
   const saveTimer = () => store.set('blob.timer', timer);
+  const hooks = { brain: () => {} };   // the music blob repaints along with the Brain
 
   /* ---------- formatting ---------- */
   const clk = ms => E.clock(ms);
@@ -296,6 +297,7 @@
     $('#clockBadge').textContent = `${clock.real ? '' : 'Demo clock '}${clk(n)}${clock.speed > 1 ? ' · ' + clock.speed + '×' : ''}`;
     $('#dateLine').textContent = new Date(n).toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' });
     $('#sampleBadge').hidden = !state.sample;
+    hooks.brain();
   }
 
   /* ---------- timer ---------- */
@@ -309,7 +311,7 @@
     state = E.apply(state, { changes: [...(moved ? [{ op: 'move', id, from: x.start, to: at }] : []), { op: 'status', id, to: 'active' }] });
     timer = { id, total: x.dur * MIN, endsAt: n + x.dur * MIN, left: x.dur * MIN, running: true, warned: false };
     saveTimer(); save(); cue('start', 'start'); brainJelly.jiggle(1.2); closeCard(); render(); syncDesktop();
-    music.forBlob(x.cat);
+    music.forBlob(x);
     if (moved) setTimeout(() => scrollToX((nodes.get(id)?.tx || 0) - track.clientWidth * 0.3), 80);
     const p = E.proposeRunningLate(state, 0, n);
     if (p.changes.length) {
@@ -322,8 +324,8 @@
   }
   function togglePause() {
     if (!timer) return;
-    if (timer.running) { timer.left = timer.endsAt - now(); timer.running = false; music.pause(); }
-    else { timer.endsAt = now() + timer.left; timer.running = true; music.resume(); }
+    if (timer.running) { timer.left = timer.endsAt - now(); timer.running = false; music.timerEvent('pause'); }
+    else { timer.endsAt = now() + timer.left; timer.running = true; music.timerEvent('resume'); }
     saveTimer(); renderBrain(); syncDesktop();
   }
   function finishActive(id = timer && timer.id) {
@@ -331,7 +333,7 @@
     const n = nodes.get(id);
     if (n) n.jelly.pop();
     state = E.apply(state, { changes: [{ op: 'status', id, to: 'done' }] });
-    if (timer && timer.id === id) { timer = null; music.pause(); }
+    if (timer && timer.id === id) { timer = null; music.timerEvent('end'); }
     saveTimer(); save(); cue(upcoming().some(x => x.kind === 'session') ? 'end' : 'done', upcoming().length ? 'tick' : 'done');
     closeCard(); setTimeout(render, 120); brainJelly.jiggle(1.5); syncDesktop();
   }
@@ -342,7 +344,7 @@
     if (timer && timer.running) {
       const left = timer.endsAt - n;
       if (!timer.warned && left <= 2 * MIN && timer.total > 4 * MIN) { timer.warned = true; cue('warn', 'warn'); saveTimer(); }
-      if (left <= 0) { timer.left = 0; timer.running = false; saveTimer(); cue('end', 'end'); brainJelly.jiggle(2); showTimeUp(timer.id); syncDesktop(); music.pause(); }
+      if (left <= 0) { timer.left = 0; timer.running = false; saveTimer(); cue('end', 'end'); brainJelly.jiggle(2); showTimeUp(timer.id); syncDesktop(); music.timerEvent('end'); }
     }
     // A session whose time passed without being started: offer a new time (once).
     if (!ui.card) {
@@ -475,7 +477,7 @@
       const p = E.proposeTimeUp(state, id, choice, now());
       if (choice.startsWith('extend')) {
         const add = (p.changes[0].to - p.changes[0].from) * MIN;
-        p.after = () => { timer = { ...timer, total: timer.total + add, endsAt: now() + add, left: add, running: true, warned: false }; saveTimer(); renderBrain(); syncDesktop(); music.resume(); };
+        p.after = () => { timer = { ...timer, total: timer.total + add, endsAt: now() + add, left: add, running: true, warned: false }; saveTimer(); renderBrain(); syncDesktop(); music.timerEvent('resume'); };
         if (p.changes.length === 1) return approve(p);   // nothing else moves: no need to ask
       } else {
         p.after = () => { timer = null; saveTimer(); renderBrain(); };
@@ -786,22 +788,197 @@
     $('#calMsg').textContent = `Added ${name}. Synced ${stamp()}.`;
   };
 
+  /* ---------- music: the now-playing blob and "What plays when" (plan logic in engine/music.js) ---------- */
+  const MP = window.BlobMusic;
   const music = (() => {
-    const cfg = store.get('blob.music', { on: false, map: {} });
-    let linked = false, current = null;
-    const say = e => reply(esc(e.message || String(e)));
-    return {
-      cfg, save: () => store.set('blob.music', cfg),
-      set linked(v) { linked = v; }, get linked() { return linked; },
-      forBlob(cat) {
-        if (!linked || !cfg.on) return;
-        const uri = cfg.map[cat];
-        if (!uri) { if (current) { Links.pause(); current = null; } return; }
-        current = uri; Links.play(uri).catch(say);
-      },
-      pause() { if (linked && cfg.on && current) Links.pause(); },
-      resume() { if (linked && cfg.on && current) Links.play(null).catch(say); },
-    };
+    let plan = MP.migrate(store.get('blob.music', null));
+    const savePlan = () => store.set('blob.music', plan);
+    // np: what Spotify says is playing. ours: BLOB started the music that's on, so the timer may pause it.
+    const st = { linked: false, np: null, problem: '', premium: true, ours: false, note: '', noteT: 0, lists: null, liked: null, pick: null, q: '', artists: [] };
+    const player = $('#player');   // <spotify-capsule>, from the Codex handoff (spotify-capsule.js)
+    let pollT = 0, searchT = 0;
+
+    const say = (msg, ms = 6000) => { st.note = msg; clearTimeout(st.noteT); st.noteT = setTimeout(() => { st.note = ''; paint(); }, ms); paint(); };
+    function failed(e) {
+      const m = String((e && e.message) || e);
+      if (/Premium/.test(m)) st.premium = false;
+      else if (/Open Spotify/.test(m)) st.problem = 'nodev';
+      else say(m.slice(0, 120));
+      paint();
+    }
+    // The blob music is for now: the running timer's, else the next one you could start.
+    const focusBlob = () => (timer && session(timer.id)) || upcoming().find(x => x.kind === 'session') || null;
+    const allChoices = () => [...Object.values(plan.kinds), ...Object.values(plan.blobs)];
+    const contextName = uri => { if (!uri) return ''; const c = allChoices().find(x => x.uri === uri) || (st.lists || []).find(x => x.uri === uri); return c ? c.name : uri.includes(':collection') ? 'Liked Songs' : uri.includes(':artist:') ? 'Artist' : uri.includes(':album:') ? 'Album' : 'Spotify'; };
+
+    async function refresh() {
+      if (!st.linked) return;
+      try { st.np = await Links.nowPlaying(); if (st.np) st.problem = ''; }
+      catch (e) { st.np = null; }
+      paint();
+    }
+    function schedule() {
+      clearInterval(pollT);
+      if (st.linked) pollT = setInterval(() => { if (!document.hidden) refresh(); }, 5000);
+    }
+    const playback = () => st.np ? { playing: st.np.playing, contextUri: st.np.contextUri } : null;
+
+    async function play(choice) {
+      try {
+        await Links.play(choice ? choice.uri : null);
+        if (choice && plan.rules.shuffle) Links.shuffle(true);
+        st.ours = true; st.problem = ''; st.premium = true;
+        setTimeout(refresh, 700);
+      } catch (e) { failed(e); }
+    }
+    async function pause() { await Links.pause(); if (st.np) st.np.playing = false; paint(); setTimeout(refresh, 700); }
+
+    /* Timer hooks */
+    async function forBlob(blob) {
+      if (!st.linked) return;
+      await refresh();
+      const d = MP.onStart(plan, blob, playback());
+      if (d.do === 'play') play({ uri: d.uri, name: d.name });
+      else if (d.do === 'pause') { pause(); st.ours = false; }
+      else if (d.why === 'respect') say(`Kept your music. Tap ▾ to switch to ${d.name}.`);
+      else if (d.why === 'already') st.ours = true;
+    }
+    function timerEvent(ev) {
+      if (!st.linked) return;
+      const a = MP.onTimer(plan, ev, st.ours);
+      if (a === 'pause') pause();
+      else if (a === 'resume') play(null);
+    }
+
+    /* Buttons on the blob */
+    async function control(what) {
+      if (what === 'toggle') {
+        if (st.np && st.np.playing) { st.ours = false; return pause(); }
+        if (st.np && st.np.title) return play(null);
+        const c = MP.choiceFor(plan, focusBlob());
+        return play(c.type === 'list' ? c : st.liked || (await likedSongs()));
+      }
+      try { await Links.control(what); st.premium = true; setTimeout(refresh, 600); } catch (e) { failed(e); }
+    }
+    async function likedSongs() { if (!st.liked) st.liked = await Links.likedSongs().catch(() => null); return st.liked; }
+
+    /* The now-playing blob */
+    function paint() {
+      const n = st.np, blob = focusBlob(), next = MP.choiceFor(plan, blob);
+      let mode = 'ok';
+      if (!Links || !Links.available) mode = 'web';
+      else if (!st.linked) mode = 'connect';
+      else if (st.problem === 'nodev' && !(n && n.title)) mode = 'retry';
+      else if (!st.premium) mode = 'free';
+      if (n && n.title) {
+        player.track = { title: n.title, artist: n.artist, artworkUrl: n.art, context: contextName(n.contextUri), progress: n.progress, duration: n.duration, at: n.at, device: n.device };
+      } else {
+        // Nothing playing yet: say what the next blob will play.
+        const what = next.type === 'list' ? next.name : next.type === 'silent' ? 'Silence' : '';
+        player.track = { title: what || 'Nothing playing', artist: what === 'Silence' ? 'Nothing plays for this blob' : what ? 'Plays when you start' : 'Pick music under What plays when',
+          context: blob ? catOf(blob.cat).label + ' music' : 'Spotify player' };
+      }
+      player.playing = !!(n && n.playing);
+      player.note = st.note;
+      player.mode = mode;
+    }
+    player.addEventListener('playback-action', e => {
+      const a = e.detail.action;
+      if (a === 'plan') return openPlan();
+      if (a === 'swap') { const blob = focusBlob(); return openPlan(blob && plan.blobs[blob.id] ? 'blob' : blob ? blob.cat : null); }
+      if (a === 'connect') { fillSettings(); $('#settingsDlg').showModal(); return; }
+      if (a === 'retry') { st.problem = ''; const c = MP.choiceFor(plan, focusBlob()); return timer && timer.running && c.type === 'list' ? play(c) : refresh(); }
+      control(a === 'play' || a === 'pause' ? 'toggle' : a === 'previous' ? 'prev' : a);
+    });
+
+    /* "What plays when" */
+    async function loadLists() {
+      if (st.lists || !st.linked) return;
+      try { st.lists = await Links.playlists(); } catch (e) { st.lists = []; }
+      likedSongs();
+      // Settings from the first version only had playlist addresses: fill in their names.
+      let fixed = false;
+      for (const c of allChoices()) if (c.name === 'Your playlist') { const p = st.lists.find(x => x.uri === c.uri); if (p) { c.name = p.name; fixed = true; } }
+      if (fixed) savePlan();
+    }
+    function openPlan(open = null) {
+      st.pick = open; st.q = ''; st.artists = [];
+      loadLists().then(() => { if (ui.card === 'music') renderPlan(); });
+      renderPlan();
+    }
+    function renderPlan() {
+      const blob = focusBlob();
+      const dot = c => `<i class="dot" style="--a:${c.c[0]};--b:${c.c[1]}"></i>`;
+      const row = (key, label, colors, choice, extra = '') => `<div class="mp-row${extra}"><span class="lab">${dot({ c: colors })}<span>${esc(label)}</span></span>
+        <button class="pick" data-pick="${key}" aria-expanded="${st.pick === key}"><b>${esc(MP.label(choice))}</b><span>${st.pick === key ? '▲' : '▼'}</span></button>
+        ${st.pick === key ? `<div class="mp-picker"><input id="mpQ" placeholder="Search your playlists, or type an artist for their radio" aria-label="Search playlists or artists" value="${esc(st.q)}"><div id="mpRes">${results()}</div></div>` : ''}</div>`;
+      const sw = (k, txt, sub) => `<div class="mp-rule"><span>${txt}${sub ? `<small>${sub}</small>` : ''}</span><button class="sw" role="switch" aria-checked="${!!plan.rules[k]}" data-rule="${k}" aria-label="${esc(txt)}"></button></div>`;
+      openCard(`<div class="mp"><div class="head"><div><span class="kicker">Music</span><h3>What plays when</h3></div>${xBtn}</div>
+        ${st.linked ? '' : '<p class="meta">Connect Spotify in Settings to use these.</p>'}
+        <h4>For each kind of blob</h4>
+        <div class="mp-rows">${Object.entries(CATS).map(([k, c]) => row(k, c.label, c.c, plan.kinds[k] || MP.KEEP, blob && blob.cat === k ? ' cur' : '')).join('')}</div>
+        ${blob ? `<h4>Just this blob</h4><div class="mp-rows">${row('blob', blob.title, catOf(blob.cat).c, plan.blobs[blob.id] || { type: 'same', name: '' }).replace('<b></b>', `<b>Same as ${esc(catOf(blob.cat).label)}</b>`)}</div>` : ''}
+        <h4>Rules</h4>
+        ${sw('start', 'Start music when I start a blob')}
+        ${sw('pause', 'Pause music when I pause the timer', 'And play again when you resume')}
+        <div class="mp-rule"><span>When time's up</span><span class="seg"><button data-up="pause" class="${plan.rules.timeUp === 'pause' ? 'on' : ''}">Pause music</button><button data-up="keep" class="${plan.rules.timeUp === 'keep' ? 'on' : ''}">Keep playing</button></span></div>
+        ${sw('respect', "Don't take over music I put on myself", 'If something is already playing when a blob starts, BLOB leaves it')}
+        ${sw('shuffle', 'Shuffle')}
+        <p class="from">The timer only pauses music BLOB started. Artist radio plays the artist, then Spotify's Autoplay keeps going with similar songs.</p></div>`, 'music');
+      card.querySelectorAll('[data-pick]').forEach(b => b.onclick = () => { st.pick = st.pick === b.dataset.pick ? null : b.dataset.pick; st.q = ''; st.artists = []; renderPlan(); const q = $('#mpQ'); if (q) q.focus(); });
+      card.querySelectorAll('[data-rule]').forEach(b => b.onclick = () => { plan.rules[b.dataset.rule] = !plan.rules[b.dataset.rule]; savePlan(); b.setAttribute('aria-checked', plan.rules[b.dataset.rule]); });
+      card.querySelectorAll('[data-up]').forEach(b => b.onclick = () => { plan.rules.timeUp = b.dataset.up; savePlan(); renderPlan(); });
+      const q = $('#mpQ');
+      if (q) q.oninput = () => {
+        st.q = q.value; paintResults();
+        clearTimeout(searchT);
+        if (st.q.trim().length >= 2 && st.linked) searchT = setTimeout(async () => { const asked = st.q; const found = await Links.searchArtists(asked.trim()).catch(() => []); if (asked === st.q) { st.artists = found; paintResults(); } }, 300);
+        else st.artists = [];
+      };
+      bindResults();
+    }
+    function results() {
+      const key = st.pick, blob = focusBlob();
+      const cur = key === 'blob' ? (blob && plan.blobs[blob.id]) : plan.kinds[key];
+      const q = st.q.trim().toLowerCase();
+      const same = (a, b) => a && b && a.type === b.type && (a.type !== 'list' || a.uri === b.uri);
+      const opt = (c, txt, img, special) => `<button class="mp-opt${special ? ' special' : ''}${same(cur, c) || (!cur && c.type === 'same') || (!cur && key !== 'blob' && c.type === 'keep') ? ' sel' : ''}" data-c="${esc(JSON.stringify(c))}">${img === undefined ? '' : img ? `<img src="${esc(img)}" alt="">` : '<i></i>'}<span>${esc(txt)}</span></button>`;
+      const specials = [
+        ...(key === 'blob' && blob ? [opt({ type: 'same' }, `Same as ${catOf(blob.cat).label}`, undefined, true)] : []),
+        opt(MP.KEEP, "Keep what's playing", undefined, true), opt(MP.SILENT, 'Silence', undefined, true),
+      ];
+      const lists = [...(st.liked ? [st.liked] : []), ...(st.lists || [])].filter(p => !q || p.name.toLowerCase().includes(q));
+      const radio = st.artists.map(a => opt(MP.artistChoice(a), `📻 ${a.name} radio`, a.art));
+      return `<div class="mp-opts">${specials.join('')}</div>
+        ${radio.length ? `<span class="sub">Artist radio</span><div class="mp-opts">${radio.join('')}</div>` : q.length >= 2 && st.linked ? '<span class="sub">Looking for artists…</span>' : ''}
+        <span class="sub">${st.lists ? 'Your playlists' : st.linked ? 'Loading your playlists…' : ''}</span>
+        <div class="mp-opts">${lists.map(p => opt({ type: 'list', uri: p.uri, name: p.name }, p.name, p.art || '')).join('') || (st.lists ? '<span class="sub">No playlists match.</span>' : '')}</div>`;
+    }
+    function paintResults() { const r = $('#mpRes'); if (r) { r.innerHTML = results(); bindResults(); } }
+    function bindResults() {
+      card.querySelectorAll('[data-c]').forEach(b => b.onclick = () => {
+        const c = JSON.parse(b.dataset.c), blob = focusBlob();
+        if (st.pick === 'blob') { if (c.type === 'same') delete plan.blobs[blob.id]; else plan.blobs[blob.id] = c; }
+        else plan.kinds[st.pick] = c;
+        savePlan();
+        // Changing the music for the blob that's running switches it now.
+        if (timer && timer.running && blob && timer.id === blob.id && (st.pick === 'blob' || st.pick === blob.cat)) {
+          const now = MP.choiceFor(plan, blob);
+          if (now.type === 'list') play(now); else if (now.type === 'silent' && st.np && st.np.playing) pause();
+        }
+        st.pick = null; renderPlan(); paint();
+      });
+    }
+
+    function setLinked(v) {
+      st.linked = v;
+      if (!v) { st.np = null; st.lists = null; st.liked = null; }
+      schedule(); refresh(); paint();
+    }
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
+    hooks.brain = paint;
+    paint();
+    return { forBlob, timerEvent, setLinked, openPlan, paint, get linked() { return st.linked; } };
   })();
   let calTimer = 0;
   async function refreshConnections(announce = false) {
@@ -820,7 +997,7 @@
     }
     const sp = await Links.status('spotify');
     $('#spConnect').hidden = sp; $('#spDisconnect').hidden = !sp; $('#spMap').hidden = !sp;
-    music.linked = sp;
+    music.setLinked(sp);
     for (const a of conn.accounts) if (!Object.keys(a.cals).length) await loadCalendars(a).catch(() => {});
     renderCalendars();
     if (conn.accounts.length) {
@@ -829,17 +1006,8 @@
       if (!calTimer) calTimer = setInterval(() => syncAll(true), 5 * 60000);
       syncAll(!announce);
     }
-    if (sp) renderPicks();
   }
-  async function renderPicks() {
-    $('#spOn').checked = music.cfg.on;
-    let lists = [];
-    try { lists = await Links.playlists(); } catch (e) { $('#spMsg').textContent = String(e).slice(0, 140); }
-    const opts = '<option value="">No music</option>' + lists.map(l => `<option value="${esc(l.uri)}">${esc(l.name)}</option>`).join('');
-    $('#spPicks').innerHTML = Object.entries(CATS).filter(([k]) => k !== 'meeting').map(([k, v]) => `<label>${esc(v.label)}<select data-cat="${k}">${opts}</select></label>`).join('');
-    $$('#spPicks select').forEach(sel => { sel.value = music.cfg.map[sel.dataset.cat] || ''; sel.onchange = () => { music.cfg.map[sel.dataset.cat] = sel.value; music.save(); }; });
-  }
-  $('#spOn').onchange = e => { music.cfg.on = e.target.checked; music.save(); };
+  $('#spPlan').onclick = () => { $('#settingsDlg').close(); music.openPlan(); };
   $('#gId').oninput = e => { conn.gId = e.target.value.trim(); saveConn(); };
   $('#gSecret').oninput = e => { conn.gSecret = e.target.value.trim(); saveConn(); };
   $('#spId').oninput = e => { conn.spId = e.target.value.trim(); saveConn(); };
@@ -858,7 +1026,7 @@
   $('#gSync').onclick = () => syncAll(false);
   $('#spConnect').onclick = async () => {
     $('#spMsg').textContent = 'Finish signing in in your browser…';
-    try { await Links.connect('spotify', conn.spId); $('#spMsg').textContent = 'Connected. Pick a playlist for each kind of blob.'; music.cfg.on = true; music.save(); await refreshConnections(); }
+    try { await Links.connect('spotify', conn.spId); $('#spMsg').textContent = 'Connected. Set what plays when from the ♪ on the music blob.'; await refreshConnections(); }
     catch (e) { $('#spMsg').textContent = String(e).slice(0, 160); }
   };
   $('#spDisconnect').onclick = async () => { await Links.disconnect('spotify'); $('#spMsg').textContent = 'Disconnected.'; refreshConnections(); };
