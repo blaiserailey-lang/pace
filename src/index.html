@@ -23,16 +23,9 @@
     <section class="panel" aria-label="Desk">
       <div class="desk">
         <div class="char-wrap">
-          <svg id="char" viewBox="0 0 120 120" aria-hidden="true">
-            <g class="bob">
-              <ellipse cx="60" cy="114" rx="34" ry="4" fill="var(--line)"/>
-              <path class="body" d="M60 14c28 0 44 20 44 50 0 28-18 46-44 46S16 92 16 64c0-30 16-50 44-50z"/>
-              <path d="M44 10q4 -8 10 0" stroke="var(--ink)" stroke-width="3" fill="none" stroke-linecap="round"/>
-              <g class="blink"><ellipse cx="46" cy="56" rx="6" ry="8" fill="#fff"/><ellipse cx="74" cy="56" rx="6" ry="8" fill="#fff"/>
-              <circle id="pl" cx="47" cy="58" r="3.4" fill="#171a2b"/><circle id="pr" cx="75" cy="58" r="3.4" fill="#171a2b"/></g>
-              <path id="mouth" d="M48 78q12 10 24 0" stroke="#171a2b" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-            </g>
-          </svg>
+          <svg id="char" viewBox="0 0 120 120" aria-hidden="true"></svg>
+          <div id="char3d" hidden aria-label="Your 3D character" role="img"></div>
+          <div class="char-name" id="charName">Pip</div>
           <div class="bubble" id="say" aria-live="polite">Hey. Ready to run the day?</div>
         </div>
         <div class="clock">
@@ -91,13 +84,6 @@
         <label for="focus">Focus block (min)<input id="focus" type="number" min="15" max="120" value="50"></label>
         <label for="snack">Snack break (min)<input id="snack" type="number" min="5" max="30" value="10"></label>
         <label for="meal">Meal at<input id="meal" type="time" value="13:00"></label>
-        <label for="personality">Character
-          <select id="personality">
-            <option value="coach">Coach</option>
-            <option value="chill">Chill friend</option>
-            <option value="hype">Hype man</option>
-          </select>
-        </label>
       </div>
       <div class="label" style="margin-top:16px">Sound pack · tap to preview</div>
       <div class="pack">
@@ -106,10 +92,54 @@
         <button data-snd="end">Time's up</button>
         <button data-snd="done">Day complete</button>
       </div>
-      <p class="note">Each character has its own sounds. Custom sound uploads and Spotify playback are coming next.</p>
+      <p class="note">Each personality has its own sounds. Custom sound uploads and Spotify playback are coming next.</p>
     </section>
   </div>
+
+  <section class="panel" aria-labelledby="charTitle">
+    <div class="row" style="justify-content:space-between">
+      <h2 id="charTitle">Your character</h2>
+      <div class="row">
+        <button id="charRandom">Surprise me</button>
+        <button id="charReset">Reset</button>
+      </div>
+    </div>
+    <div class="editor">
+      <div class="preview">
+        <svg id="charPreview" viewBox="0 0 120 120" role="img" aria-label="Character preview"></svg>
+      </div>
+      <div class="settings editor-fields">
+        <label for="cName">Name<input id="cName" maxlength="20" autocomplete="off"></label>
+        <label for="personality">Personality
+          <select id="personality">
+            <option value="coach">Coach</option>
+            <option value="chill">Chill friend</option>
+            <option value="hype">Hype man</option>
+          </select>
+        </label>
+        <label class="drawn-only" for="cShape">Body<select id="cShape"></select></label>
+        <label class="drawn-only" for="cEyes">Eyes<select id="cEyes"></select></label>
+        <label class="drawn-only" for="cAddon">Add-on<select id="cAddon"></select></label>
+        <div class="field photo-field">
+          <span>Make it from a picture</span>
+          <div class="row">
+            <label class="button" for="cPhoto">Upload a picture</label>
+            <input id="cPhoto" type="file" accept="image/png,image/jpeg,image/webp,image/gif" class="sr-only">
+            <button id="cDrawn" hidden>Use the drawn character</button>
+            <span class="note" id="cPhotoStatus" style="margin:0">Pace cuts it out and puffs it into a 3D character.</span>
+          </div>
+        </div>
+        <div class="field drawn-only">
+          <span>Color</span>
+          <div class="swatches" id="cColors" role="radiogroup" aria-label="Color"></div>
+        </div>
+      </div>
+    </div>
+    <p class="note">"Match the block" makes your character change color with focus, breaks, meals and hype. Its face still changes mood either way.</p>
+  </section>
 </div>
+<script src="character.js"></script>
 <script src="app.js"></script>
+<script type="module" src="char3d.js"></script>
 </body>
 </html>

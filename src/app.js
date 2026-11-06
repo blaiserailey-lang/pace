@@ -108,7 +108,8 @@ function renderSheet(){
 
 function setMode(type){
   document.documentElement.style.setProperty('--mode', `var(${MODE_COLOR[type]})`);
-  $('#mouth').setAttribute('d', MOUTH[type]);
+  curMood = type; const m = $('#mouth'); if (m) m.setAttribute('d', MOUTH[type]);
+  if (char3d) char3d.setMode(type);
   $('#musicMode').textContent = 'Spotify: ' + MUSIC[type];
 }
 function say(key, p){ const pers = $('#personality').value; $('#say').textContent = LINES[pers][key](p); }
@@ -131,6 +132,7 @@ function enter(i){
   if (idx >= plan.length){ running = false; started = false; sfx('done'); say('done'); $('#go').textContent='Start day'; idx = plan.length-1; remaining = 0; renderSheet(); renderClock(); syncDesktop(); return; }
   const b = plan[idx]; remaining = b.dur*60;
   say(b.type, b.name); renderSheet(); renderClock(); syncDesktop();
+  if (char3d) char3d.hop();
 }
 
 /* Driven by the wall clock (Date.now), not animation frames, so the day keeps
@@ -210,8 +212,87 @@ document.querySelectorAll('[data-snd]').forEach(b=>b.onclick=()=>sfx(b.dataset.s
 /* Eyes follow the pointer a little */
 document.addEventListener('pointermove', e=>{
   const r = $('#char').getBoundingClientRect(); const dx = Math.max(-2, Math.min(2,(e.clientX-(r.left+r.width/2))/80)), dy = Math.max(-2, Math.min(2,(e.clientY-(r.top+r.height/2))/80));
+  if (char3d) char3d.lookAt((e.clientX-(r.left+r.width/2))/300, (e.clientY-(r.top+r.height/2))/300);
+  if (!$('#pl')) return;
   $('#pl').setAttribute('cx', 46+dx); $('#pr').setAttribute('cx', 74+dx); $('#pl').setAttribute('cy', 57+dy); $('#pr').setAttribute('cy', 57+dy);
 });
+
+/* ---------- Character editor ---------- */
+let charCfg = loadChar(), curMood = 'focus', char3d = null;
+let charImage = null; try { charImage = localStorage.getItem('pace.charImage'); } catch(e){}
+
+function renderChar(){
+  const photo = charCfg.kind === 'photo' && charImage;
+  $('#charName').textContent = charCfg.name || 'Pip';
+  $('#char').hidden = !!photo; $('#char3d').hidden = !photo;
+  $('.editor').classList.toggle('photo', !!photo);
+  $('#cDrawn').hidden = !photo;
+  if (!photo) {
+    $('#char').innerHTML = charSVG(charCfg, MOUTH[curMood] || MOUTH.focus, true);
+    $('#charPreview').outerHTML = `<svg id="charPreview" viewBox="0 0 120 120" role="img" aria-label="Character preview">${charSVG(charCfg, MOUTH[curMood] || MOUTH.focus)}</svg>`;
+  } else {
+    $('#charPreview').outerHTML = `<img id="charPreview" alt="Your character's cutout" src="${charImage}">`;
+    if (last3DImage !== charImage) {
+      last3DImage = charImage;
+      ensure3D().then(c => { if (c) c.setImage(charImage); else { $('#char3d').hidden = true; $('#char').hidden = false; $('#char').innerHTML = charSVG(charCfg, MOUTH[curMood] || MOUTH.focus, true); } });
+    }
+  }
+  $('#cName').value = charCfg.name;
+  $('#cShape').value = charCfg.shape; $('#cEyes').value = charCfg.eyes; $('#cAddon').value = charCfg.addon;
+  document.querySelectorAll('#cColors .swatch').forEach(b => b.setAttribute('aria-checked', String(b.dataset.c === charCfg.color)));
+  const custom = $('#cCustom'); if (charCfg.color !== 'mode' && !CHAR_SWATCHES.includes(charCfg.color)) custom.value = charCfg.color;
+}
+function updateChar(patch){ charCfg = {...charCfg, ...patch}; saveChar(charCfg); renderChar(); }
+
+let loading3D = null, last3DImage = null;
+function ensure3D(){
+  if (char3d) return Promise.resolve(char3d);
+  if (!loading3D) loading3D = new Promise(res => {
+    const go = () => { try { char3d = new window.PaceChar3D.Char3D($('#char3d')); char3d.setMode(curMood); } catch(e) { char3d = null; } res(char3d); };
+    if (window.PaceChar3D) go(); else {
+      window.addEventListener('pace3d-ready', go, {once:true});
+      setTimeout(() => { if (!window.PaceChar3D) res(null); }, 8000);   // 3D couldn't load: keep the drawn character
+    }
+  });
+  return loading3D;
+}
+
+function setupEditor(){
+  const fill = (sel, opts) => { $(sel).innerHTML = Object.entries(opts).map(([v,l]) => `<option value="${v}">${l}</option>`).join(''); };
+  fill('#cShape', CHAR_OPTIONS.shape); fill('#cEyes', CHAR_OPTIONS.eyes); fill('#cAddon', CHAR_OPTIONS.addon);
+  $('#cColors').innerHTML = `<button type="button" class="swatch mode" role="radio" data-c="mode">Match the block</button>` +
+    CHAR_SWATCHES.map(c => `<button type="button" class="swatch" role="radio" data-c="${c}" style="--sw:${c}" aria-label="Color ${c}"></button>`).join('') +
+    `<input type="color" id="cCustom" class="swatch-custom" value="#ff7a59" aria-label="Pick any color">`;
+  $('#cColors').addEventListener('click', e => { const b = e.target.closest('.swatch'); if (b) updateChar({color: b.dataset.c}); });
+  $('#cCustom').addEventListener('input', e => updateChar({color: e.target.value}));
+  $('#cName').addEventListener('input', e => updateChar({name: e.target.value.slice(0,20)}));
+  $('#cShape').onchange = e => updateChar({shape: e.target.value});
+  $('#cEyes').onchange = e => updateChar({eyes: e.target.value});
+  $('#cAddon').onchange = e => updateChar({addon: e.target.value});
+  $('#charRandom').onclick = () => {
+    const pick = o => { const k = Object.keys(o); return k[Math.floor(Math.random()*k.length)]; };
+    updateChar({kind:'drawn', shape: pick(CHAR_OPTIONS.shape), eyes: pick(CHAR_OPTIONS.eyes), addon: pick(CHAR_OPTIONS.addon),
+      color: Math.random() < .3 ? 'mode' : CHAR_SWATCHES[Math.floor(Math.random()*CHAR_SWATCHES.length)]});
+  };
+  $('#charReset').onclick = () => { charCfg = {...CHAR_DEFAULT}; saveChar(charCfg); renderChar(); };
+  $('#cDrawn').onclick = () => updateChar({kind:'drawn'});
+  $('#cPhoto').onchange = async e => {
+    const file = e.target.files[0]; if (!file) return;
+    const status = $('#cPhotoStatus'); status.textContent = 'Puffing it up…';
+    const url = await new Promise(r => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(file); });
+    const c = await ensure3D();
+    if (!c) { status.textContent = "This device can't show 3D, so the drawn character stays."; return; }
+    try {
+      const cut = await c.setImage(url);
+      charImage = cut; last3DImage = cut; try { localStorage.setItem('pace.charImage', cut); } catch(err){}
+      charCfg = {...charCfg, kind:'photo'}; saveChar(charCfg);
+      status.textContent = 'Done. Click your character to make it hop.';
+      renderChar();
+    } catch(err) { status.textContent = "Couldn't read that picture. Try a PNG or JPG."; }
+    e.target.value = '';
+  };
+}
+setupEditor(); renderChar();
 
 renderProjects(); rebuild(false); lastTick = Date.now(); setInterval(tick, 250);
 document.addEventListener('visibilitychange', ()=>{ if (!document.hidden) tick(); });

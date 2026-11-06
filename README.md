@@ -24,11 +24,13 @@ cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
 - `src/` is the app UI (plain HTML, CSS and JS, no build step). It was ported from the Phase 1 prototype.
+- `src/char3d.js` turns an uploaded picture into a puffy 3D character (three.js, all on-device).
 - `src-tauri/` is the native shell (Tauri 2): menu-bar countdown, notifications, keep-running-when-closed.
 
 ## Roadmap
 
 - Spotify playback that switches between Work, Chill and Hype mixes
 - Custom sound uploads per character
+- Optional AI image-to-3D "HD" character
 - Launch at login and a start-of-day reminder
 - Signed and notarized builds

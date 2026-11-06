@@ -80,3 +80,27 @@ td input[type=number]{width:72px}
 .pack{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
 .pack button{font-weight:400;font-size:13px;padding:6px 12px}
 @media (prefers-reduced-motion:reduce){.bob,.blink{animation:none}}
+/* Character editor */
+.char-name{font-family:var(--display);font-weight:700;font-size:13px;color:var(--muted);margin-bottom:-4px}
+.editor{display:grid;grid-template-columns:180px 1fr;gap:20px;align-items:start;margin-top:12px}
+@media (max-width:620px){.editor{grid-template-columns:1fr}}
+.preview{background:var(--chip);border:1px solid var(--line);border-radius:16px;display:grid;place-items:center;padding:12px;aspect-ratio:1;max-width:180px;width:100%;justify-self:center}
+.preview svg{width:100%;height:100%}
+#charPreview .body{fill:var(--mode, var(--work));transition:fill .4s}
+.editor-fields{margin-top:0}
+.field{display:grid;gap:4px;font-size:13px;color:var(--muted);grid-column:1/-1}
+.swatches{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.swatch{width:32px;height:32px;border-radius:50%;padding:0;border:2px solid var(--line);background:var(--sw)}
+.swatch[aria-checked="true"]{outline:3px solid var(--ink);outline-offset:2px}
+.swatch.mode{width:auto;padding:0 12px;border-radius:999px;background:var(--chip);font-size:13px;font-weight:700;color:var(--ink)}
+.swatch-custom{width:32px;height:32px;border-radius:50%;border:2px solid var(--line);padding:0;overflow:hidden;cursor:pointer;background:none}
+.swatch-custom::-webkit-color-swatch-wrapper{padding:0}.swatch-custom::-webkit-color-swatch{border:none;border-radius:50%}
+#char3d{width:170px;height:180px;margin-bottom:-8px;cursor:pointer;touch-action:manipulation}
+#char3d canvas{display:block}
+.char-wrap{width:170px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+label.button{border:1px solid var(--line);background:var(--chip);border-radius:999px;padding:8px 16px;cursor:pointer;font-weight:700;color:var(--ink);font-size:15px}
+label.button:hover{border-color:var(--muted)}
+#cPhoto:focus-visible + * , label.button:focus-within{outline:3px solid var(--mode, var(--work));outline-offset:2px}
+.editor.photo .drawn-only{opacity:.4;pointer-events:none}
+.preview img{width:100%;height:100%;object-fit:contain}
