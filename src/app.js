@@ -867,6 +867,33 @@
   };
   refreshConnections();
 
+  /* ---------- app updates: new builds from GitHub, installed in place (Mac app only) ---------- */
+  const updates = (() => {
+    let available = null;
+    async function check(loud) {
+      if (!tauri) { $('#verMsg').textContent = 'Updates work in the Mac app.'; return; }
+      $('#verMsg').textContent = 'Checking…';
+      try {
+        const u = await tauri.core.invoke('check_update');
+        available = u.version;
+        $('#updateBtn').hidden = !available;
+        if (available) $('#updateBtn').textContent = `Update to ${available}`;
+        $('#verMsg').textContent = available ? `You have ${u.current}. Version ${available} is ready.` : `You have ${u.current}, the latest.`;
+      } catch (e) { $('#verMsg').textContent = loud ? `Couldn't check for updates: ${String(e).slice(0, 120)}` : ''; }
+    }
+    async function install() {
+      if (!available) return;
+      $('#updateBtn').disabled = true; $('#updateBtn').textContent = 'Updating…';
+      save(); saveTimer();
+      try { await tauri.core.invoke('install_update'); }   // BLOB restarts when this succeeds
+      catch (e) { $('#updateBtn').disabled = false; $('#updateBtn').textContent = `Update to ${available}`; reply(`The update didn't install: ${esc(String(e).slice(0, 160))}`); }
+    }
+    return { check, install };
+  })();
+  $('#checkUpdate').onclick = () => updates.check(true);
+  $('#updateBtn').onclick = () => updates.install();
+  if (tauri) { setTimeout(() => updates.check(false), 4000); setInterval(() => updates.check(false), 6 * 3600 * 1000); }
+
   /* ---------- demo scenarios ---------- */
   $$('#chips [data-demo]').forEach(b => b.onclick = () => {
     const n = now();

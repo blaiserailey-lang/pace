@@ -17,6 +17,7 @@
     </div>
     <div class="tools">
       <span class="badge clock" id="clockBadge" role="status"></span>
+      <button class="primary" id="updateBtn" hidden>Update</button>
       <button class="ghost" id="addBlob">+ Blob</button>
       <button class="ghost" id="addDeadline">+ Deadline</button>
       <div class="zoom" role="group" aria-label="Zoom">
@@ -177,6 +178,9 @@
     <p class="note">Give a moment your own clip and lines. Upload audio or video, trim it, and Blob plays it instead of the built-in sound.</p>
     <div class="moments" id="moments"></div>
   </details>
+
+  <h3>App updates</h3>
+  <div class="row"><span class="note" id="verMsg" style="margin:0">Updates work in the Mac app.</span><button class="ghost" id="checkUpdate">Check for updates</button></div>
 
   <h3>Sample data</h3>
   <div class="row"><button class="ghost" id="clearSample">Remove sample tasks and deadline</button><button class="ghost danger" id="resetSample">Reset to the sample day</button></div>

@@ -21,3 +21,4 @@ sha2 = "0.10"
 base64 = "0.22"
 getrandom = "0.2"
 keyring = { version = "3", features = ["apple-native"] }
+tauri-plugin-updater = "2"
