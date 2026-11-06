@@ -144,14 +144,16 @@
     wrap.appendChild(el); lane.appendChild(wrap);
     const n = { id: it.id, wrap, el, x: 0, y: 0, vx: 0, vy: 0, sc: 0.2, vs: 0, tx: 0, ty: 0, ts: 0, size: 0 };
     n.jelly = new Jelly(el, { colors: catOf(it.cat).c, glow: true, radius: 0.43, points: 40, wobble: 1.1, seed: seedOf(it.id) });
-    el.addEventListener('click', () => select(n.id));
+    el.addEventListener('pointerdown', e => startDrag(e, n));
+    el.addEventListener('click', () => { if (n.justDragged) { n.justDragged = false; return; } select(n.id); });
     return n;
   }
 
   function paintNode(n, it) {
     const el = n.el, c = catOf(it.cat);
     const cls = ['blob', it.kind, it.past && 'past', it.missed && 'missed', it.kind === 'session' && timer && timer.id === it.id && 'active',
-      ui.selected === it.id && 'selected', ui.proposal && ui.proposal.touch.has(it.id) && 'preview'];
+      ui.selected === it.id && 'selected', ui.proposal && ui.proposal.touch.has(it.id) && 'preview',
+      canDrag(it) && 'draggable', it.fixed && it.kind !== 'deadline' && 'locked', n.drag && 'dragging'];
     let st = null;
     if (it.deadlineId) { st = E.deadlineStatus(state, it.deadlineId, now()); if (st) cls.push(st.state); }
     el.className = cls.filter(Boolean).join(' ');
@@ -183,7 +185,7 @@
       let n = nodes.get(it.id);
       if (!n || n.leaving) { if (n) { n.wrap.remove(); } n = makeNode(it); n.x = from.x; n.y = from.y; n.sc = 0.15; nodes.set(it.id, n); }
       const p = L.pos[i];
-      n.tx = p.x; n.ty = p.y;
+      if (!n.drag) { n.tx = p.x; n.ty = p.y; }
       if (Math.abs(n.size - p.s) > 0.5) { n.size = p.s; n.wrap.style.width = n.wrap.style.height = p.s + 'px'; }
       n.item = it; paintNode(n, it);
     });
@@ -195,6 +197,67 @@
     const firstUp = list.find(x => !x.past);
     if (firstUp) { const p = L.pos[list.indexOf(firstUp)], pin = document.createElement('div'); pin.className = 'nowpin'; pin.textContent = `now ${clk(now())}`; pin.style.left = p.x + 'px'; pin.style.top = (p.y - p.s / 2 - 34) + 'px'; lane.appendChild(pin); }
     renderBrain();
+  }
+
+  /* ---------- drag a blob along the string ----------
+     Only your own flexible blobs drag. Calendar events (and lunch) are locked in place and time.
+     Dropping lands the blob after the blob it was dropped behind. If that exact time is free it
+     just moves; if not, BLOB proposes the closest free time and waits for approval. */
+  const canDrag = it => it && it.kind === 'session' && !it.past && !(timer && timer.id === it.id);
+  let drag = null;
+  function dropTarget(px, n) {
+    const it = n.item, buf = state.prefs.buffer * MIN, floor = E.dayOf(now()) === it.day ? Math.ceil(now() / (5 * MIN)) * 5 * MIN : 0;
+    const cands = order.filter(id => id !== n.id).map(id => nodes.get(id)).filter(m => m && !m.leaving && m.item.kind !== 'deadline');
+    const before = cands.filter(m => m.tx < px).pop(), after = cands.find(m => m.tx >= px);
+    let start, day, x;
+    if (before && (!after || after.item.day === before.item.day || before.item.past === false)) {
+      day = before.item.day; start = E.end(before.item) + buf; x = before.tx + before.size / 2 + GAP * ui.zoom / 2;
+    } else if (after) {
+      day = after.item.day; start = after.item.start - it.dur * MIN - buf; x = after.tx - after.size / 2 - GAP * ui.zoom / 2;
+    } else return null;
+    start = Math.max(start, E.at(day, state.prefs.dayStart), day === E.dayOf(now()) ? Math.ceil(now() / (5 * MIN)) * 5 * MIN : 0);
+    start = Math.ceil(start / (5 * MIN)) * 5 * MIN;
+    return { start, x, y: (before || after).ty };
+  }
+  function startDrag(e, n) {
+    if (e.button !== 0 || ui.proposal) return;
+    const it = n.item;
+    if (!it) return;
+    const x0 = e.clientX, y0 = e.clientY, el = n.el;
+    let on = false, mark = null, tgt = null;
+    const move = ev => {
+      if (!on && Math.hypot(ev.clientX - x0, ev.clientY - y0) < 6) return;
+      if (!on) {
+        if (!canDrag(it)) {   // calendar blobs are locked: a little shake says so
+          cleanup(); if (it.fixed && it.kind !== 'deadline') { n.jelly.jiggle(1); n.justDragged = true; flashLock(n); }
+          return;
+        }
+        on = true; n.drag = true; drag = n; el.classList.add('dragging'); el.setPointerCapture(ev.pointerId);
+        mark = document.createElement('div'); mark.className = 'dropmark'; lane.appendChild(mark);
+      }
+      const l = lane.getBoundingClientRect(), px = ev.clientX - l.left, py = ev.clientY - l.top;
+      n.tx = px; n.ty = py;
+      const tr = track.getBoundingClientRect();
+      if (ev.clientX > tr.right - 60) track.scrollLeft += 16; else if (ev.clientX < tr.left + 60) track.scrollLeft -= 16;
+      tgt = dropTarget(px, n);
+      if (tgt) { mark.hidden = false; mark.style.left = tgt.x + 'px'; mark.style.top = (tgt.y - 70) + 'px'; mark.textContent = `${dayLabel(E.dayOf(tgt.start))} ${clk(tgt.start)}`; } else mark.hidden = true;
+    };
+    const up = () => {
+      cleanup();
+      if (!on) return;
+      n.drag = false; drag = null; n.justDragged = true; el.classList.remove('dragging'); if (mark) mark.remove();
+      if (!tgt || tgt.start === it.start) return render();
+      const p = E.proposeMove(state, it.id, { start: tgt.start }, now());
+      if (p.changes.length === 1 && p.changes[0].op === 'move' && p.changes[0].to === tgt.start) return approve(p);   // free: it just moves
+      showProposal(p);   // taken or past a deadline: show the closest free time and ask
+    };
+    const cleanup = () => { window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  }
+  function flashLock(n) {
+    const tip = document.createElement('div'); tip.className = 'dropmark lockmsg'; tip.textContent = 'Calendar events stay put';
+    tip.style.left = n.tx + 'px'; tip.style.top = (n.ty - n.size / 2 - 40) + 'px'; lane.appendChild(tip);
+    setTimeout(() => tip.remove(), 1600);
   }
 
   // One loop: springs pull each blob to its place (overshooting a little, like jelly), then the strands are drawn.
@@ -395,17 +458,73 @@
         <button class="ghost" data-a="later">Later today</button>
         <button class="ghost" data-a="tomorrow">Tomorrow</button>
         ${isActive ? '' : '<button class="ghost" data-a="done">Mark done</button>'}
+        <button class="ghost" data-a="edit">Edit</button>
         ${dl ? '<button class="ghost" data-a="deadline">Deadline</button>' : ''}
       </div>
       ${miniChat('e.g. “move to 3pm”, “push to tomorrow”')}
+      <p class="from">Drag the blob along the string to move it.</p>
       <p class="from">${esc(it.source || 'You added this')}. <span class="label-ai">The helper follows fixed rules; it isn't AI.</span></p>`, 'detail');
     card.querySelectorAll('[data-a]').forEach(b => b.onclick = () => {
       const a = b.dataset.a;
       if (a === 'start') requestStart(id);
       else if (a === 'done') finishActive(id);
       else if (a === 'deadline') showDeadline(it.deadlineId);
+      else if (a === 'edit') showEdit(id);
       else showProposal(E.proposeMove(state, id, a, now()));
     });
+    render();
+  }
+
+  /* Edit a blob after it's made: name, kind, length, or remove it. Renames and recolours apply
+     at once; a length change that shifts other blobs is shown first and waits for approval. */
+  function showEdit(id) {
+    const x = session(id); if (!x) return;
+    ui.selected = id; ui.proposal = null;
+    const running = timer && timer.id === id;
+    const ed = { title: x.title, cat: x.cat, dur: x.dur };
+    openCard(`<div class="head"><div class="grow"><span class="kicker">Edit blob</span>
+        <input class="edit-name" id="eName" maxlength="60" value="${esc(x.title)}" aria-label="Name"></div>${xBtn}</div>
+      <p class="meta" style="margin-top:12px">Kind</p>
+      <div class="kinds" role="group" aria-label="Kind">${Object.entries(CATS).map(([k, v]) => `<button type="button" class="kindsw${v.light ? ' light' : ''}" data-cat="${k}" aria-pressed="${k === x.cat}" style="--a:${v.c[0]};--b:${v.c[1]}">${esc(v.label)}</button>`).join('')}</div>
+      <p class="meta" style="margin-top:12px">Length${running ? ' (it\'s running: use +15 when time\'s up)' : ''}</p>
+      <div class="row lenrow">
+        <button type="button" class="ghost icon" data-len="-15" aria-label="15 minutes shorter" ${running ? 'disabled' : ''}>−</button>
+        <span class="len" id="eLen" aria-live="polite"></span>
+        <button type="button" class="ghost icon" data-len="15" aria-label="15 minutes longer" ${running ? 'disabled' : ''}>+</button>
+      </div>
+      <div class="actions">
+        <button class="primary" data-save>Save</button>
+        <button class="ghost" data-back>Cancel</button>
+        <button class="ghost danger" data-rm>Remove</button>
+      </div>
+      <p class="from">${esc(x.source || 'You added this')}. Calendar events can't be edited here; change them in your calendar.</p>`, 'edit');
+    const paint = () => {
+      $('#eLen').textContent = `${durTxt(ed.dur)}${ed.dur !== x.dur ? ` (was ${durTxt(x.dur)})` : ''}`;
+      card.querySelectorAll('[data-cat]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.cat === ed.cat)));
+      const n = nodes.get(id); if (n) { n.jelly.setColors(catOf(ed.cat).c); n.cat = ed.cat; }
+    };
+    paint();
+    const nameIn = $('#eName');
+    nameIn.focus(); nameIn.select();
+    nameIn.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); save(); } });
+    card.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { ed.cat = b.dataset.cat; paint(); });
+    card.querySelectorAll('[data-len]').forEach(b => b.onclick = () => { ed.dur = Math.max(5, Math.min(240, ed.dur + +b.dataset.len)); paint(); });
+    card.querySelector('[data-back]').onclick = () => { const n = nodes.get(id); if (n) { n.jelly.setColors(catOf(x.cat).c); n.cat = x.cat; } select(id); };
+    const rm = card.querySelector('[data-rm]');
+    rm.onclick = () => {
+      if (!rm.dataset.sure) { rm.dataset.sure = '1'; rm.textContent = 'Remove for good?'; return; }
+      if (timer && timer.id === id) { timer = null; saveTimer(); }
+      approve(E.proposeRemove(state, id)); cue('done', 'tick');
+    };
+    function save() {
+      ed.title = nameIn.value.trim() || x.title;
+      const p = E.proposeEdit(state, id, ed, now());
+      if (!p.changes.length) return p.conflicts.length ? showProposal(p) : select(id);
+      // Renaming, recolouring, or a length that still fits: nothing else moves, so just do it.
+      if (p.changes.every(c => c.op === 'edit' || c.op === 'resize')) { approve(p); return select(id); }
+      showProposal(p);
+    }
+    card.querySelector('[data-save]').onclick = save;
     render();
   }
 
@@ -420,6 +539,8 @@
       if (c.op === 'unplace') return `<li><span class="op">no time</span>${esc(name(c.id))} comes off the string until you pick a time</li>`;
       if (c.op === 'deadline') return `<li><span class="op">deadline</span>${esc(c.item.title)}, due ${E.when(c.item.due, n)}</li>`;
       if (c.op === 'event') return `<li><span class="op">calendar</span>${esc(c.item.title)} · ${clk(c.item.start)}–${clk(E.end(c.item))} (stays fixed)</li>`;
+      if (c.op === 'edit') return `<li><span class="op">edit</span>${[c.to.title && `name → ${esc(c.to.title)}`, c.to.cat && `kind → ${esc(catOf(c.to.cat).label)}`].filter(Boolean).join(', ')}</li>`;
+      if (c.op === 'remove') return `<li><span class="op">remove</span>${esc(name(c.id))}</li>`;
       if (c.op === 'flag') return '';
       return '';
     }).join('');
