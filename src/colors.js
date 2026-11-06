@@ -4,7 +4,7 @@
         that calendar's colour shows as a band around the edge.
      2. Otherwise a calendar event takes its calendar's colour (personal = blue, session = grey).
      3. Otherwise a blob you made takes its kind's colour (breaks, admin, fitness, creative).
-   Some colours are reserved and never fill a blob: lime belongs to the Brain, and teal, gold and
+   Some colours are reserved and never fill a blob: lime belongs to the Brain, aqua-into-violet to the music blob, and teal, gold and
    pink only ever mean Deadline Gravity (healthy, needs attention, critical).
    Each colour is a pair [light, deep]; the jelly runs light to deep diagonally. */
 (function () {
@@ -43,6 +43,7 @@
 
   const RESERVED = {
     brain:     ['#e0ff5c', '#5fd413'],
+    music:     ['#6ef3ff', '#8b5cff'],   // the now-playing blob (Spotify player)
     healthy:   '#19e3c3',
     attention: '#ffd60a',
     critical:  '#ff3d7f',
