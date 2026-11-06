@@ -81,6 +81,32 @@ async fn fetch_text(url: String) -> Result<String, String> {
     .map_err(|e| e.to_string())?
 }
 
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    current: String,
+    version: Option<String>,
+    notes: Option<String>,
+}
+
+/// Looks for a newer build published by CI. `version` is None when this one is the latest.
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<UpdateInfo, String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let current = app.package_info().version.to_string();
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    Ok(UpdateInfo { current, version: update.as_ref().map(|u| u.version.clone()), notes: update.and_then(|u| u.body) })
+}
+
+/// Downloads the newer build, checks its signature, swaps it in, and restarts BLOB.
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    use tauri_plugin_updater::UpdaterExt;
+    let update = app.updater().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    let Some(update) = update else { return Err("BLOB is already up to date".into()) };
+    update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
+    app.restart();
+}
+
 fn fmt(secs: u64) -> String {
     format!("{:02}:{:02}", secs / 60, secs % 60)
 }
@@ -142,11 +168,14 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state.clone())
         .manage(oauth::Tokens::default())
         .invoke_handler(tauri::generate_handler![
             sync_timer,
             fetch_text,
+            check_update,
+            install_update,
             oauth::oauth_connect,
             oauth::oauth_status,
             oauth::oauth_disconnect,

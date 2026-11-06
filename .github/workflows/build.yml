@@ -28,6 +28,13 @@ jobs:
 
   mac:
     runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      # Signs update bundles so installed copies of BLOB trust them. Without it, builds still work
+      # but no in-app update is published.
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -40,6 +47,14 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      - name: Set version
+        run: |
+          echo "VERSION=0.2.${{ github.run_number }}" >> "$GITHUB_ENV"
+          VERSION="0.2.${{ github.run_number }}" node -e '
+            const f = "src-tauri/tauri.conf.json", fs = require("fs"), c = JSON.parse(fs.readFileSync(f));
+            c.version = process.env.VERSION;
+            if (!process.env.TAURI_SIGNING_PRIVATE_KEY) c.bundle.createUpdaterArtifacts = false;
+            fs.writeFileSync(f, JSON.stringify(c, null, 2));'
       - run: npm ci
       - run: npm run build:mac
       - uses: actions/upload-artifact@v4
@@ -47,3 +62,17 @@ jobs:
           name: Pace-mac
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
           if-no-files-found: error
+      - name: Publish update
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && env.TAURI_SIGNING_PRIVATE_KEY != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          B=src-tauri/target/universal-apple-darwin/release/bundle
+          TGZ=$(ls "$B"/macos/*.app.tar.gz)
+          NAME=$(basename "$TGZ")
+          URL="https://github.com/${{ github.repository }}/releases/download/v$VERSION/$NAME" SIG="$(cat "$TGZ.sig")" node -e '
+            const p = { signature: process.env.SIG, url: process.env.URL };
+            console.log(JSON.stringify({ version: process.env.VERSION, notes: process.env.NOTES, pub_date: new Date().toISOString(),
+              platforms: { "darwin-aarch64": p, "darwin-x86_64": p } }, null, 2));' > latest.json
+          gh release create "v$VERSION" "$TGZ" "$TGZ.sig" "$B"/dmg/*.dmg latest.json \
+            --title "BLOB $VERSION" --notes "$(git log -1 --pretty=%B | head -1)" --latest

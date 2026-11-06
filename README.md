@@ -58,7 +58,9 @@ When a blob's timer starts, BLOB plays that kind's playlist on your active Spoti
 
 ## Get the app
 
-Every push to `main` builds a universal Mac app. Open the latest run under **Actions → Build**, download **Pace-mac**, and open the `.dmg`. The app isn't signed yet, so the first time, right-click **BLOB** in Applications and choose **Open**.
+Download the `.dmg` from the latest [release](https://github.com/blaiserailey-lang/pace/releases/latest).
+
+**Updates:** every push to `main` publishes a new release. BLOB checks for one at launch and every few hours, and shows an **Update** button in the top bar (or use Settings → App updates). Updates are signed with the key in the `TAURI_SIGNING_PRIVATE_KEY` repository secret, and the app only installs bundles signed with it. Builds also stay available under **Actions → Build → Pace-mac**. The app isn't signed yet, so the first time, right-click **BLOB** in Applications and choose **Open**.
 
 ## Develop
 
