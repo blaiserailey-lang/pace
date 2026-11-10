@@ -168,3 +168,39 @@ test('asking for a taken time offers the closest free time, earlier or later', (
   const p = E.proposeMove(s, 'w', { start: t(0, '13:45') }, NOW);
   assert.equal(p.changes[0].to, t(0, '13:30'));
 });
+
+test('renaming or recolouring a blob changes nothing else', () => {
+  let s = base();
+  s = E.apply(s, E.proposeAdd(s, { id: 'x', title: 'Inbox', cat: 'email', dur: 30 }, NOW));
+  const p = E.proposeEdit(s, 'x', { title: 'Inbox zero', cat: 'creative' }, NOW);
+  assert.deepEqual(p.changes.map(c => c.op), ['edit']);
+  const n = E.apply(s, p), x = n.sessions.find(o => o.id === 'x');
+  assert.equal(x.title, 'Inbox zero'); assert.equal(x.cat, 'creative'); assert.equal(x.start, s.sessions[0].start);
+});
+
+test('a longer blob pushes later flexible blobs but never a calendar event', () => {
+  let s = base();
+  s = E.apply(s, E.proposeAdd(s, { id: 'a', title: 'A', dur: 30, start: t(0, '10:00') }, NOW));
+  s = E.apply(s, E.proposeAdd(s, { id: 'b', title: 'B', dur: 30, start: t(0, '10:40') }, NOW));
+  const p = E.proposeEdit(s, 'a', { dur: 60 }, NOW);
+  const n = E.apply(s, p), a = n.sessions.find(o => o.id === 'a'), b = n.sessions.find(o => o.id === 'b');
+  assert.equal(a.start, t(0, '10:00')); assert.equal(a.dur, 60);
+  assert.ok(b.start >= E.end(a)); assert.ok(!overlapping(a, b));
+  assert.equal(JSON.stringify(n.events), JSON.stringify(s.events));
+});
+
+test('a longer blob that would hit a calendar event moves itself to free time', () => {
+  let s = base();
+  s = E.apply(s, E.proposeAdd(s, { id: 'a', title: 'A', dur: 30, start: t(0, '13:00') }, NOW));
+  const p = E.proposeEdit(s, 'a', { dur: 90 }, NOW);
+  assert.ok(p.changes.some(c => c.op === 'move'));
+  const n = E.apply(s, p), a = n.sessions.find(o => o.id === 'a');
+  for (const ev of n.events) assert.ok(!overlapping(a, ev), `overlaps ${ev.title}`);
+});
+
+test('removing a blob only removes that blob', () => {
+  let s = base();
+  s = E.apply(s, E.proposeAdd(s, { id: 'a', title: 'A', dur: 30 }, NOW));
+  const n = E.apply(s, E.proposeRemove(s, 'a'));
+  assert.equal(n.sessions.length, 0); assert.equal(n.events.length, 3);
+});

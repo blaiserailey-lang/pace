@@ -228,6 +228,45 @@
     return proposal('move', `Move “${x.title}” to ${when(t, now)}`, why + (dl ? ` Still before it's due ${when(dl.due, now)}.` : ''), [{ op: 'move', id, from: x.start, to: t }]);
   }
 
+  /* Edit a flexible session after it was created. patch = {title?, cat?, dur?}.
+     Renaming or recolouring never moves anything. A longer blob that no longer fits where it is
+     either pushes the later flexible blobs that day (when no calendar event is in the way) or
+     moves itself to the closest free time. Anchors never move. Nothing changes until applied. */
+  function proposeEdit(s, id, patch, now) {
+    const x = find(s, id);
+    if (!x) return proposal('edit', 'Nothing to edit', 'That blob is no longer on the plan.', []);
+    const changes = [];
+    const meta = {};
+    if (patch.title != null && patch.title.trim() && patch.title.trim() !== x.title) meta.title = patch.title.trim();
+    if (patch.cat && patch.cat !== x.cat) meta.cat = patch.cat;
+    if (Object.keys(meta).length) changes.push({ op: 'edit', id, from: { title: x.title, cat: x.cat }, to: meta });
+    const name = meta.title || x.title, dur = patch.dur ? Math.max(5, Math.round(patch.dur)) : x.dur;
+    if (dur === x.dur) return proposal('edit', changes.length ? `Update “${name}”` : 'Nothing changed', changes.length ? 'Its time stays the same.' : '', changes);
+    changes.push({ op: 'resize', id, from: x.dur, to: dur });
+    const day = dayOf(x.start), ex = new Set([id]), buf = s.prefs.buffer * MIN;
+    if (dur < x.dur || slotOnDay(s, day, dur, { from: x.start, exclude: ex, cap: false }) === x.start)
+      return proposal('edit', `Make “${name}” ${plural(dur, 'minute')}`, dur < x.dur ? 'Shorter, same start. Nothing else moves.' : 'It still fits where it is. Nothing else moves.', changes);
+    const staged = clone(s), y = staged.sessions.find(o => o.id === id);
+    y.dur = dur;
+    const anchorHit = anchors(s, day).find(a => overlaps(y.start - buf, end(y) + buf, a.start, end(a)));
+    if (!anchorHit) {
+      const { changes: shifts, bumped } = reflowAfter(staged, end(y) + buf, now, new Set([id]));
+      return proposal('edit', `Make “${name}” ${plural(dur, 'minute')}`,
+        `${plural(shifts.length, 'later blob')} shift${shifts.length === 1 ? 's' : ''} to make room${bumped.length ? `, and ${plural(bumped.length, 'blob')} moves to another day` : ''}. Calendar events keep their times.`, changes.concat(shifts));
+    }
+    const t = nearestOnDay(staged, day, dur, x.start, { exclude: ex, notBefore: now }) ?? findSlot(staged, dur, { from: Math.max(now, x.start), exclude: ex });
+    if (t == null) return proposal('edit', `No room for a ${plural(dur, 'minute')} “${name}”`, `It would run into “${anchorHit.title}” and nothing else is free.`, [], { conflicts: [id] });
+    return proposal('edit', `Make “${name}” ${plural(dur, 'minute')} and move it to ${when(t, now)}`,
+      `At ${clock(x.start)} it would run into “${anchorHit.title}”, which stays put. This is the closest free time.`, changes.concat([{ op: 'move', id, from: x.start, to: t }]), { conflicts: [anchorHit.id] });
+  }
+
+  /* Take a flexible session off the plan. Calendar events can't be removed here. */
+  function proposeRemove(s, id) {
+    const x = find(s, id);
+    if (!x) return proposal('remove', 'Nothing to remove', '', []);
+    return proposal('remove', `Remove “${x.title}”`, 'Nothing else moves.', [{ op: 'remove', id }]);
+  }
+
   /* Push the remaining flexible sessions today forward after something ran long. Anchors never move. */
   function reflowAfter(s, from, now, ex = new Set()) {
     const staged = clone(s), changes = [], bumped = [];
@@ -324,6 +363,7 @@
       if (c.op === 'add') n.sessions.push({ ...c.item });
       else if (c.op === 'move' && x) { x.start = c.to; x.status = 'planned'; }
       else if (c.op === 'resize' && x) x.dur = c.to;
+      else if (c.op === 'edit' && x) Object.assign(x, c.to);
       else if (c.op === 'status' && x) x.status = c.to;
       else if (c.op === 'unplace' && x) x.status = 'unplaced';
       else if (c.op === 'remove') n.sessions = n.sessions.filter(o => o.id !== c.id);
@@ -363,7 +403,7 @@
   const api = {
     DEFAULT_PREFS, MIN, DAY, dayOf, addDays, at, clock, when, end,
     createState, dayFlow, capacity, slotOnDay, findSlot,
-    proposeAdd, proposeDeadline, proposeMove, proposeTimeUp, proposeRunningLate, proposeCalendarChange, proposeMissed,
+    proposeAdd, proposeDeadline, proposeMove, proposeTimeUp, proposeRunningLate, proposeCalendarChange, proposeMissed, proposeEdit, proposeRemove,
     apply, report, deadlineStatus,
   };
   if (typeof module === 'object' && module.exports) module.exports = api; else root.BlobEngine = api;
